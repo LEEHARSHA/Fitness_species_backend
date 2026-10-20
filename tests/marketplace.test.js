@@ -725,8 +725,14 @@ test('public catalog reports database failures instead of returning fabricated p
     getDbStatus: () => 'connected',
   });
 
-  const response = await request(app).get('/api/products');
+  const response = await request(app)
+    .get('/api/products')
+    .set('Origin', 'https://seller-lilac-five.vercel.app');
   assert.equal(response.status, 500);
+  assert.equal(
+    response.headers['access-control-allow-origin'],
+    'https://seller-lilac-five.vercel.app',
+  );
   assert.deepEqual(response.body, {
     success: false,
     message: 'An unexpected server error occurred.',
@@ -743,7 +749,7 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
   ];
   for (const origin of origins) {
     const allowed = await request(app)
-      .options('/api/seller/profile')
+      .options('/api/seller/products')
       .set('Origin', origin)
       .set('Access-Control-Request-Method', 'PATCH')
       .set('Access-Control-Request-Headers', 'authorization,content-type');
@@ -765,7 +771,7 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
   assert.equal(rejected.body.message, 'Origin is not allowed.');
 
   const rejectedPreflight = await request(app)
-    .options('/api/seller/profile')
+    .options('/api/seller/products')
     .set('Origin', 'https://untrusted.example.test')
     .set('Access-Control-Request-Method', 'GET')
     .set('Access-Control-Request-Headers', 'authorization,content-type');
@@ -777,19 +783,58 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
     .set('Origin', 'http://localhost:3005');
   assert.equal(unauthenticatedSellerRequest.status, 401);
   assert.equal(unauthenticatedSellerRequest.headers['access-control-allow-origin'], 'http://localhost:3005');
+
+  const unauthenticatedProductRequest = await request(app)
+    .post('/api/seller/products')
+    .set('Origin', 'https://seller-lilac-five.vercel.app')
+    .set('Content-Type', 'application/json')
+    .send({});
+  assert.equal(unauthenticatedProductRequest.status, 401);
+  assert.equal(
+    unauthenticatedProductRequest.headers['access-control-allow-origin'],
+    'https://seller-lilac-five.vercel.app',
+  );
 });
 
-test('CORS origin configuration parses and trims comma-separated values', () => {
+test('CORS origin configuration preserves required portals and parses configured origins exactly', () => {
   assert.deepEqual(
     [...parseCorsOrigins(' http://localhost:3005, https://seller-lilac-five.vercel.app ,, ')],
-    ['http://localhost:3005', 'https://seller-lilac-five.vercel.app'],
+    [
+      'https://seller-lilac-five.vercel.app',
+      'https://admin-portal-sepia-chi.vercel.app',
+      'http://localhost:3005',
+    ],
   );
   assert.deepEqual([...parseCorsOrigins(undefined)], [
-    'http://localhost:3000',
-    'http://localhost:3005',
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:3005',
   ]);
+  assert.equal(parseCorsOrigins('*,https://local.example.test').has('*'), false);
+  assert.equal(parseCorsOrigins('https://local.example.test/').has('https://local.example.test'), false);
+  assert.equal(parseCorsOrigins('https://local.example.test/').has('https://local.example.test/'), true);
+});
+
+test('authenticated seller product creation succeeds with CORS from the production portal', async () => {
+  const app = makeApp({ corsOrigins: parseCorsOrigins('http://localhost:5173') });
+  const seller = await withAuth(app).post('/api/seller/profile').send({
+    businessName: 'Species Fitness',
+    ownerName: 'Seller Name',
+    phone: '+91 9876543210',
+    businessAddress: completeSeller().businessAddress,
+  });
+  assert.equal(seller.status, 200);
+
+  const created = await request(app)
+    .post('/api/seller/products')
+    .set('Origin', 'https://seller-lilac-five.vercel.app')
+    .set('Authorization', 'Bearer seller-a-token')
+    .send(productPayload());
+
+  assert.equal(created.status, 201);
+  assert.equal(created.headers['access-control-allow-origin'], 'https://seller-lilac-five.vercel.app');
+  assert.equal(created.body.product.status, 'pending');
 });
 
 test('MongoDB connection failure remains disconnected when no URI is configured', async () => {

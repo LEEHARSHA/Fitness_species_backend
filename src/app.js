@@ -12,19 +12,23 @@ import { createMarketplaceRoutes } from './marketplace/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
-const DEFAULT_CORS_ORIGINS = [
-  'http://localhost:3000',
-  'http://localhost:3005',
+const PRODUCTION_CORS_ORIGINS = [
   'https://seller-lilac-five.vercel.app',
   'https://admin-portal-sepia-chi.vercel.app',
 ];
 
+const DEFAULT_LOCAL_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3005',
+];
+
 export function parseCorsOrigins(value = process.env.CORS_ORIGINS) {
-  const origins = (value || DEFAULT_CORS_ORIGINS.join(','))
-    .split(',')
+  const configuredOrigins = (value || DEFAULT_LOCAL_CORS_ORIGINS.join(','))
+    .split(',');
+  const origins = configuredOrigins
     .map((origin) => origin.trim())
-    .filter(Boolean);
-  return new Set(origins);
+    .filter((origin) => Boolean(origin) && origin !== '*');
+  return new Set([...PRODUCTION_CORS_ORIGINS, ...origins]);
 }
 
 export function createApp({

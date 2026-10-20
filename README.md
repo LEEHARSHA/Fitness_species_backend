@@ -84,10 +84,10 @@ The automated tests use isolated fixtures and injected authentication/database a
    - `FIREBASE_PROJECT_ID=sellerportal-2786c`
    - `FIREBASE_SERVICE_ACCOUNT_JSON` (secure JSON value) **or** `GOOGLE_APPLICATION_CREDENTIALS` pointing to a securely provisioned file
    - `ADMIN_FIREBASE_UIDS`
-   - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005,https://seller-lilac-five.vercel.app,https://admin-portal-sepia-chi.vercel.app`
+   - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005`
 5. In Atlas, allow the Render service's outbound IP and verify `GET /api/health` returns HTTP 200 with `database.status: connected`. Do not treat a successful deployment or a listening port as proof of MongoDB connectivity.
 
-Set `MONGODB_URI` and `MONGODB_DB_NAME=fitness_species` in Render's encrypted environment settings; also preserve the Firebase, administrator, and CORS settings listed above. `CORS_ORIGINS` is a comma-separated list of exact allowed origins; local origins are included here for local development and can be omitted from production settings if only deployed portals should connect. Render supplies `PORT`; the backend binds to `0.0.0.0`. Configure `/api/health` as the health check path. No production backend URL exists until Render creates the service.
+Set `MONGODB_URI` and `MONGODB_DB_NAME=fitness_species` in Render's encrypted environment settings; also preserve the Firebase, administrator, and CORS settings listed above. `CORS_ORIGINS` is a comma-separated list of exact additional allowed origins. The two deployed Vercel portal origins are always included by the backend; configured origins are added to those, and localhost defaults are used when `CORS_ORIGINS` is unset. Wildcard origins are not accepted. Render supplies `PORT`; the backend binds to `0.0.0.0`. Configure `/api/health` as the health check path. No production backend URL exists until Render creates the service.
 
 ## Authorize the first administrator
 
@@ -97,6 +97,6 @@ For production, configure the same `ADMIN_FIREBASE_UIDS` variable in the hosting
 
 ## Connect both Vercel portals
 
-Set `NEXT_PUBLIC_API_URL` in the Seller Portal and Admin Portal Vercel project settings to the backend base URL, for example `https://<your-render-service>.onrender.com` (do not append `/api`). Redeploy each frontend after changing the environment variable. The backend's `CORS_ORIGINS` must contain each exact deployed origin; include `http://localhost:3000` and `http://localhost:3005` where local browser development needs them.
+Set `NEXT_PUBLIC_API_URL` in the Seller Portal and Admin Portal Vercel project settings to the backend base URL, for example `https://<your-render-service>.onrender.com` (do not append `/api`). Redeploy each frontend after changing the environment variable. The backend always allows the exact deployed Seller and Admin Portal origins; add any local browser development origins to `CORS_ORIGINS`.
 
 After deployment, test the health endpoint, sign in to each portal, save a seller profile, submit a product, and verify that it is visible only to its seller until an allowlisted admin reviews it. These end-to-end steps require real Firebase and MongoDB credentials and have not been run by the automated fixture tests.
