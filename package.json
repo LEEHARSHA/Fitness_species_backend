@@ -1,0 +1,30 @@
+{
+  "name": "fitnessspeciesbackend",
+  "version": "1.0.0",
+  "description": "Node.js API for the Fitness Species marketplace.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/app.js",
+    "db:check": "node scripts/db-check.js",
+    "db:persistence-check": "node scripts/persistence-check.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "firebase-admin": "^14.4.0",
+    "helmet": "^8.1.0",
+    "mongodb": "^7.6.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
+}

@@ -1,0 +1,126 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import authRoutes from './routes/auth.routes.js';
+import userRoutes from './routes/user.routes.js';
+import workoutRoutes from './routes/workout.routes.js';
+import dietRoutes from './routes/diet.routes.js';
+import progressRoutes from './routes/progress.routes.js';
+import bmiRoutes from './routes/bmi.routes.js';
+import waterRoutes from './routes/water.routes.js';
+import { createMarketplaceRoutes } from './marketplace/routes.js';
+import mongo from './config/mongodb.js';
+import { getAuth } from 'firebase-admin/auth';
+
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3005',
+  'https://seller-lilac-five.vercel.app',
+  'https://admin-portal-sepia-chi.vercel.app',
+];
+
+export function parseCorsOrigins(value = process.env.CORS_ORIGINS) {
+  const origins = (value || DEFAULT_CORS_ORIGINS.join(','))
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return new Set(origins);
+}
+
+export function createApp({
+  getDb = mongo.getDb,
+  getDbStatus = mongo.getDbStatus,
+  getDbName = mongo.getDbName,
+  checkDB = mongo.checkDB,
+  verifyIdToken = (token) => getAuth().verifyIdToken(token),
+  adminUids = (process.env.ADMIN_FIREBASE_UIDS || '')
+    .split(',')
+    .map((uid) => uid.trim())
+    .filter(Boolean),
+  corsOrigins = parseCorsOrigins(),
+} = {}) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.use(helmet());
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || corsOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('Origin is not allowed by CORS.'));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type'],
+  }));
+  app.use(express.json({ limit: '1mb', strict: true }));
+
+  app.get('/api/health', async (_req, res) => {
+    let ready = false;
+    try {
+      await checkDB();
+      ready = getDbStatus() === 'connected';
+    } catch {
+      ready = false;
+    }
+    res.status(ready ? 200 : 503).json({
+      success: ready,
+      status: ready ? 'ok' : 'not_ready',
+      server: 'running',
+      database: {
+        name: ready ? getDbName() : null,
+        status: ready ? 'connected' : 'disconnected',
+      },
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/health') {
+      next();
+      return;
+    }
+    if (getDbStatus() !== 'connected') {
+      res.status(503).json({
+        success: false,
+        message: 'The service is temporarily unavailable because the database is not connected.',
+      });
+      return;
+    }
+    next();
+  });
+
+  app.use('/api/auth', authRoutes);
+  app.use('/api/users', userRoutes);
+  app.use('/api/workouts', workoutRoutes);
+  app.use('/api/diets', dietRoutes);
+  app.use('/api/progress', progressRoutes);
+  app.use('/api/bmi', bmiRoutes);
+  app.use('/api/water', waterRoutes);
+  app.use('/api', createMarketplaceRoutes({ getDb, verifyIdToken, adminUids }));
+
+  app.use((_req, res) => {
+    res.status(404).json({ success: false, message: 'Route not found.' });
+  });
+
+  app.use((error, _req, res, _next) => {
+    if (error?.type === 'entity.too.large') {
+      res.status(413).json({ success: false, message: 'Request body is too large.' });
+      return;
+    }
+    if (error instanceof SyntaxError && 'body' in error) {
+      res.status(400).json({ success: false, message: 'Request body must be valid JSON.' });
+      return;
+    }
+    if (error?.message === 'Origin is not allowed by CORS.') {
+      res.status(403).json({ success: false, message: 'Origin is not allowed.' });
+      return;
+    }
+    console.error('Request failed:', error?.name || 'Error');
+    res.status(500).json({ success: false, message: 'An unexpected server error occurred.' });
+  });
+
+  return app;
+}
+
+export default createApp();
