@@ -746,6 +746,7 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
     'http://localhost:3005',
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
+    'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
   ];
   for (const origin of origins) {
     const allowed = await request(app)
@@ -758,6 +759,8 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
     assert.match(allowed.headers['access-control-allow-methods'], /\bGET\b/);
     assert.match(allowed.headers['access-control-allow-methods'], /\bPOST\b/);
     assert.match(allowed.headers['access-control-allow-methods'], /\bPATCH\b/);
+    assert.match(allowed.headers['access-control-allow-methods'], /\bPUT\b/);
+    assert.match(allowed.headers['access-control-allow-methods'], /\bDELETE\b/);
     assert.match(allowed.headers['access-control-allow-methods'], /\bOPTIONS\b/);
     assert.match(allowed.headers['access-control-allow-headers'].toLowerCase(), /\bauthorization\b/);
     assert.match(allowed.headers['access-control-allow-headers'].toLowerCase(), /\bcontent-type\b/);
@@ -802,12 +805,14 @@ test('CORS origin configuration preserves required portals and parses configured
     [
       'https://seller-lilac-five.vercel.app',
       'https://admin-portal-sepia-chi.vercel.app',
+      'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
       'http://localhost:3005',
     ],
   );
   assert.deepEqual([...parseCorsOrigins(undefined)], [
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
+    'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
     'http://localhost:3000',
     'http://localhost:3005',
   ]);

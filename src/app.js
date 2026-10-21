@@ -15,6 +15,7 @@ import { getAuth } from 'firebase-admin/auth';
 const PRODUCTION_CORS_ORIGINS = [
   'https://seller-lilac-five.vercel.app',
   'https://admin-portal-sepia-chi.vercel.app',
+  'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
 ];
 
 const DEFAULT_LOCAL_CORS_ORIGINS = [
@@ -54,7 +55,7 @@ export function createApp({
       }
       callback(new Error('Origin is not allowed by CORS.'));
     },
-    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   }));
   app.use(express.json({ limit: '1mb', strict: true }));
