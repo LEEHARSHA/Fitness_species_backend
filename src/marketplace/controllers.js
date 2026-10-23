@@ -37,11 +37,66 @@ function sellerProductFilter(uid) {
   };
 }
 
+function productImageUrl(image) {
+  return typeof image === 'string'
+    ? image
+    : typeof image?.url === 'string'
+      ? image.url
+      : '';
+}
+
+function isSellerStorageImageUrl(value, uid) {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== 'https:'
+      || url.hostname !== 'firebasestorage.googleapis.com'
+      || url.port
+      || url.username
+      || url.password
+      || url.searchParams.get('alt') !== 'media'
+      || !url.searchParams.get('token')
+    ) {
+      return false;
+    }
+
+    const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (!match || decodeURIComponent(match[1]) !== (
+      process.env.FIREBASE_STORAGE_BUCKET || 'sellerportal-2786c.firebasestorage.app'
+    )) {
+      return false;
+    }
+
+    const objectPath = decodeURIComponent(match[2]).split('/');
+    return objectPath.length === 4
+      && objectPath[0] === 'sellers'
+      && objectPath[1] === uid
+      && objectPath[2] === 'products'
+      && /^[0-9a-f-]{36}\.(jpg|png|webp)$/i.test(objectPath[3]);
+  } catch {
+    return false;
+  }
+}
+
+function isValidNewSellerImageList(images, uid, existingImages = [], allowEmpty = false) {
+  if (!Array.isArray(images) || (!allowEmpty && images.length === 0) || images.length > 30) return false;
+  const existingUrls = new Set(
+    (Array.isArray(existingImages) ? existingImages : []).map(productImageUrl).filter(Boolean),
+  );
+  return images.every((image) => (
+    typeof image === 'string'
+    && (existingUrls.has(image) || isSellerStorageImageUrl(image, uid))
+  ));
+}
+
 function productResponse(product) {
   if (!product) return null;
   const id = product._id?.toString();
   return {
     ...product,
+    images: (Array.isArray(product.images) ? product.images : [])
+      .map(productImageUrl)
+      .filter(Boolean),
     ...(id ? { id } : {}),
     sellerId: product.sellerUid || product.sellerId,
     sellerUid: product.sellerUid || product.sellerId,
@@ -62,16 +117,9 @@ function publicProductResponse(product) {
     price: product.price ?? 0,
     compareAtPrice: product.compareAtPrice ?? null,
     discountPercent: product.discountPercent ?? 0,
-    images: (product.images || []).map((image) => (
-      typeof image === 'string'
-        ? image
-        : {
-          ...(image.id !== undefined ? { id: image.id } : {}),
-          url: image.url,
-          ...(image.isPrimary !== undefined ? { isPrimary: image.isPrimary } : {}),
-          ...(image.alt !== undefined ? { alt: image.alt } : {}),
-        }
-    )),
+    images: (Array.isArray(product.images) ? product.images : [])
+      .map(productImageUrl)
+      .filter(Boolean),
     stock: product.stock ?? 0,
     lowStockThreshold: product.lowStockThreshold ?? 10,
     variants: (product.variants || []).map((variant) => ({
@@ -287,6 +335,13 @@ export function createMarketplaceControllers({ getDb }) {
   const createProduct = asyncRoute(async (req, res) => {
     const result = createProductSchema.safeParse(req.body);
     if (!result.success) return invalid(res, result);
+    if (!isValidNewSellerImageList(result.data.images, req.user.uid)) {
+      res.status(400).json({
+        success: false,
+        message: 'Upload product images to the seller-owned Firebase Storage folder before submitting.',
+      });
+      return;
+    }
     const priceError = validatePricePair(result.data);
     if (priceError) {
       res.status(400).json({ success: false, message: priceError });
@@ -354,6 +409,16 @@ export function createMarketplaceControllers({ getDb }) {
       return;
     }
     if (!ensureCompleteSeller(await findSeller(db, req.user.uid), res)) return;
+    if (
+      result.data.images !== undefined
+      && !isValidNewSellerImageList(result.data.images, req.user.uid, existing.images, true)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: 'New product images must be uploaded to the seller-owned Firebase Storage folder.',
+      });
+      return;
+    }
 
     const merged = { ...existing, ...result.data };
     const priceError = validatePricePair(merged);

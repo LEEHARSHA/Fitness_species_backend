@@ -27,16 +27,6 @@ const sellerProfileSchema = z.object({
   message: 'At least one seller profile field is required.',
 });
 
-const imageSchema = z.union([
-  z.string().url().max(2048),
-  z.object({
-    id: z.string().max(120).optional(),
-    url: z.string().url().max(2048),
-    isPrimary: z.boolean().optional(),
-    alt: z.string().max(300).optional(),
-  }).passthrough(),
-]);
-
 const variantSchema = z.object({
   id: z.string().max(120).optional(),
   title: z.string().max(200).optional(),
@@ -61,7 +51,7 @@ const productFields = {
   discountPercent: z.number().finite().min(0).max(100).optional(),
   stock: z.number().int().nonnegative(),
   lowStockThreshold: z.number().int().nonnegative().optional(),
-  images: z.array(imageSchema).max(30).optional(),
+  images: z.array(z.string().url().max(2048)).min(1).max(30).optional(),
   variants: z.array(variantSchema).max(100).optional(),
   specifications: z.record(z.string(), z.string()).optional(),
 };

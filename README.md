@@ -82,12 +82,15 @@ The automated tests use isolated fixtures and injected authentication/database a
    - `MONGODB_URI`
    - `MONGODB_DB_NAME=fitness_species`
    - `FIREBASE_PROJECT_ID=sellerportal-2786c`
+   - `FIREBASE_STORAGE_BUCKET=sellerportal-2786c.firebasestorage.app`
    - `FIREBASE_SERVICE_ACCOUNT_JSON` (secure JSON value) **or** `GOOGLE_APPLICATION_CREDENTIALS` pointing to a securely provisioned file
    - `ADMIN_FIREBASE_UIDS`
    - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005,https://seller-lilac-five.vercel.app,https://admin-portal-sepia-chi.vercel.app,https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app`
 5. In Atlas, allow the Render service's outbound IP and verify `GET /api/health` returns HTTP 200 with `database.status: connected`. Do not treat a successful deployment or a listening port as proof of MongoDB connectivity.
 
 Set `MONGODB_URI` and `MONGODB_DB_NAME=fitness_species` in Render's encrypted environment settings; also preserve the Firebase and administrator settings listed above. Set `CORS_ORIGINS` to the complete comma-separated value above. The backend matches origins exactly, includes the configured origins, and uses localhost defaults when `CORS_ORIGINS` is unset. Wildcard origins are not accepted. Render supplies `PORT`; the backend binds to `0.0.0.0`. Configure `/api/health` as the health check path. No production backend URL exists until Render creates the service.
+
+New seller product submissions must include Firebase download URLs for objects under `sellers/{firebaseUid}/products/{uuid}.{jpg|png|webp}` in the configured bucket. The API verifies HTTPS, bucket, owner UID, object path, file extension, and download-token URL shape before storing the string URLs in MongoDB. The Seller Portal's Firebase Storage rules restrict uploads to the authenticated seller's folder and JPEG/PNG/WebP content types up to 10 MB. Unchanged legacy URLs can remain when a seller edits an existing product; newly added image URLs must use the controlled bucket.
 
 ## Authorize the first administrator
 

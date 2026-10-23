@@ -177,7 +177,9 @@ function productPayload(overrides = {}) {
     discountPercent: 20,
     stock: 8,
     lowStockThreshold: 2,
-    images: ['https://cdn.example.test/dumbbell.jpg'],
+    images: [
+      'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test-image-token',
+    ],
     variants: [{ id: 'v1', title: '10 kg', stock: 8, attributes: {} }],
     specifications: { material: 'Steel' },
     ...overrides,
@@ -187,6 +189,7 @@ function productPayload(overrides = {}) {
 beforeEach(() => {
   records.clear();
   process.env.FIREBASE_PROJECT_ID = 'sellerportal-2786c';
+  process.env.FIREBASE_STORAGE_BUCKET = 'sellerportal-2786c.firebasestorage.app';
 });
 
 test('health reports connected and disconnected MongoDB readiness accurately', async () => {
@@ -344,7 +347,7 @@ test('one seller cannot read or modify another sellers profile', async () => {
 });
 
 test('incomplete profiles cannot submit products; complete sellers create pending products', async () => {
-  const app = makeApp();
+  const app = makeApp({ adminUids: ['admin-1'] });
   await withAuth(app).post('/api/seller/profile').send({ businessName: 'New Store' });
   assert.equal((await withAuth(app).post('/api/seller/products').send(productPayload())).status, 409);
   const complete = completeSeller();
@@ -368,11 +371,83 @@ test('incomplete profiles cannot submit products; complete sellers create pendin
   assert.equal(created.body.product.sellerUid, 'seller-a');
   assert.ok(created.body.product.id);
   assert.equal(created.body.product.discountPercent, 20);
+  assert.deepEqual(created.body.product.images, productPayload().images);
 
   const persisted = await withAuth(app).get('/api/seller/products');
   assert.equal(persisted.status, 200);
   assert.equal(persisted.body.count, 1);
   assert.equal(persisted.body.products[0].id, created.body.product.id);
+  assert.deepEqual(persisted.body.products[0].images, productPayload().images);
+
+  const adminList = await withAuth(app, 'admin-token').get('/api/admin/products?status=pending');
+  assert.equal(adminList.status, 200);
+  assert.deepEqual(adminList.body.products[0].images, productPayload().images);
+  const adminDetail = await withAuth(app, 'admin-token')
+    .get(`/api/admin/products/${created.body.product.id}`);
+  assert.equal(adminDetail.status, 200);
+  assert.deepEqual(adminDetail.body.product.images, productPayload().images);
+});
+
+test('seller product creation requires seller-owned Firebase Storage image URLs', async () => {
+  const app = makeApp();
+  const complete = completeSeller();
+  await withAuth(app).post('/api/seller/profile').send({
+    businessName: complete.businessName,
+    ownerName: complete.ownerName,
+    phone: complete.phone,
+    businessAddress: complete.businessAddress,
+  });
+
+  const invalidUrls = [
+    'https://images.example.test/product.jpg',
+    'https://firebasestorage.googleapis.com/v0/b/untrusted-bucket/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test',
+    'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-b%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test',
+    'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2Fimage.svg?alt=media&token=test',
+  ];
+  for (const image of invalidUrls) {
+    const rejected = await withAuth(app).post('/api/seller/products').send(productPayload({
+      images: [image],
+    }));
+    assert.equal(rejected.status, 400);
+  }
+
+  const noImages = await withAuth(app).post('/api/seller/products').send(productPayload({
+    images: [],
+  }));
+  assert.equal(noImages.status, 400);
+});
+
+test('seller product image updates preserve existing URLs and accept only owned Firebase uploads', async () => {
+  const app = makeApp();
+  const complete = completeSeller();
+  await withAuth(app).post('/api/seller/profile').send({
+    businessName: complete.businessName,
+    ownerName: complete.ownerName,
+    phone: complete.phone,
+    businessAddress: complete.businessAddress,
+  });
+  const products = new TestCollection('products');
+  const id = ids.sellerA;
+  const legacyImage = 'https://contents.mediadecathlon.com/p123/abc/image.jpg';
+  await products.insertOne({
+    _id: id,
+    sellerUid: 'seller-a',
+    status: 'pending',
+    images: [legacyImage],
+    price: 10,
+    compareAtPrice: null,
+  });
+  const uploadedImage = 'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.webp?alt=media&token=test-image-token';
+  const update = await withAuth(app).patch(`/api/seller/products/${id}`).send({
+    images: [legacyImage, uploadedImage],
+  });
+  assert.equal(update.status, 200);
+  assert.deepEqual(update.body.product.images, [legacyImage, uploadedImage]);
+
+  const invalidUpdate = await withAuth(app).patch(`/api/seller/products/${id}`).send({
+    images: ['https://untrusted.example/image.jpg'],
+  });
+  assert.equal(invalidUpdate.status, 400);
 });
 
 test('seller product listing and detail enforce ownership', async () => {
@@ -687,12 +762,7 @@ test('public catalog and product detail expose only approved products', async ()
     price: 12,
     compareAtPrice: 15,
     discountPercent: 20,
-    images: [{
-      id: 'image-1',
-      url: 'https://cdn.example.test/product.jpg',
-      isPrimary: true,
-      alt: 'Product photo',
-    }],
+    images: ['https://cdn.example.test/product.jpg'],
     stock: 4,
     lowStockThreshold: 10,
     variants: [{ title: 'Standard', stock: 4 }],
@@ -713,7 +783,7 @@ test('public catalog and product detail expose only approved products', async ()
   assert.equal('rejectionReason' in detail.body.product, false);
   assert.equal('adminUid' in detail.body.product, false);
   assert.equal('credentials' in detail.body.product, false);
-  assert.equal('sellerUid' in detail.body.product.images[0], false);
+  assert.equal(detail.body.product.images[0], 'https://cdn.example.test/product.jpg');
   assert.equal('adminUid' in detail.body.product.variants[0], false);
 });
 
