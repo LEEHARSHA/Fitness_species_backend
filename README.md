@@ -84,10 +84,10 @@ The automated tests use isolated fixtures and injected authentication/database a
    - `FIREBASE_PROJECT_ID=sellerportal-2786c`
    - `FIREBASE_SERVICE_ACCOUNT_JSON` (secure JSON value) **or** `GOOGLE_APPLICATION_CREDENTIALS` pointing to a securely provisioned file
    - `ADMIN_FIREBASE_UIDS`
-   - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005`
+   - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005,https://seller-lilac-five.vercel.app,https://admin-portal-sepia-chi.vercel.app,https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app`
 5. In Atlas, allow the Render service's outbound IP and verify `GET /api/health` returns HTTP 200 with `database.status: connected`. Do not treat a successful deployment or a listening port as proof of MongoDB connectivity.
 
-Set `MONGODB_URI` and `MONGODB_DB_NAME=fitness_species` in Render's encrypted environment settings; also preserve the Firebase, administrator, and CORS settings listed above. `CORS_ORIGINS` is a comma-separated list of exact additional allowed origins. The two deployed Vercel portal origins are always included by the backend; configured origins are added to those, and localhost defaults are used when `CORS_ORIGINS` is unset. Wildcard origins are not accepted. Render supplies `PORT`; the backend binds to `0.0.0.0`. Configure `/api/health` as the health check path. No production backend URL exists until Render creates the service.
+Set `MONGODB_URI` and `MONGODB_DB_NAME=fitness_species` in Render's encrypted environment settings; also preserve the Firebase and administrator settings listed above. Set `CORS_ORIGINS` to the complete comma-separated value above. The backend matches origins exactly, includes the configured origins, and uses localhost defaults when `CORS_ORIGINS` is unset. Wildcard origins are not accepted. Render supplies `PORT`; the backend binds to `0.0.0.0`. Configure `/api/health` as the health check path. No production backend URL exists until Render creates the service.
 
 ## Authorize the first administrator
 
