@@ -13,6 +13,7 @@ import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
 const PRODUCTION_CORS_ORIGINS = [
+  'https://seller-n14iroz5o-leeharshas-projects.vercel.app',
   'https://seller-lilac-five.vercel.app',
   'https://admin-portal-sepia-chi.vercel.app',
   'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
@@ -21,7 +22,33 @@ const PRODUCTION_CORS_ORIGINS = [
 const DEFAULT_LOCAL_CORS_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3005',
+  'http://localhost:3001',
 ];
+
+export function isAllowedCorsOrigin(origin, allowedSet) {
+  if (!origin) return true;
+  if (allowedSet.has(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    if (
+      url.protocol === 'https:' &&
+      host.endsWith('.vercel.app') &&
+      (
+        host.startsWith('seller') ||
+        host.startsWith('admin-portal') ||
+        host.includes('leeharshas-projects')
+      )
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
 
 export function parseCorsOrigins(value = process.env.CORS_ORIGINS) {
   const configuredOrigins = (value || DEFAULT_LOCAL_CORS_ORIGINS.join(','))
@@ -49,7 +76,7 @@ export function createApp({
   app.use(helmet());
   app.use(cors({
     origin(origin, callback) {
-      if (!origin || corsOrigins.has(origin)) {
+      if (isAllowedCorsOrigin(origin, corsOrigins)) {
         callback(null, true);
         return;
       }

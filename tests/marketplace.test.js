@@ -177,9 +177,7 @@ function productPayload(overrides = {}) {
     discountPercent: 20,
     stock: 8,
     lowStockThreshold: 2,
-    images: [
-      'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test-image-token',
-    ],
+    images: ['https://images.example.test/product.jpg'],
     variants: [{ id: 'v1', title: '10 kg', stock: 8, attributes: {} }],
     specifications: { material: 'Steel' },
     ...overrides,
@@ -189,7 +187,6 @@ function productPayload(overrides = {}) {
 beforeEach(() => {
   records.clear();
   process.env.FIREBASE_PROJECT_ID = 'sellerportal-2786c';
-  process.env.FIREBASE_STORAGE_BUCKET = 'sellerportal-2786c.firebasestorage.app';
 });
 
 test('health reports connected and disconnected MongoDB readiness accurately', async () => {
@@ -388,8 +385,8 @@ test('incomplete profiles cannot submit products; complete sellers create pendin
   assert.deepEqual(adminDetail.body.product.images, productPayload().images);
 });
 
-test('seller product creation requires seller-owned Firebase Storage image URLs', async () => {
-  const app = makeApp();
+test('seller product creation accepts only valid HTTPS image URLs', async () => {
+  const app = makeApp({ adminUids: ['admin-1'] });
   const complete = completeSeller();
   await withAuth(app).post('/api/seller/profile').send({
     businessName: complete.businessName,
@@ -399,10 +396,11 @@ test('seller product creation requires seller-owned Firebase Storage image URLs'
   });
 
   const invalidUrls = [
-    'https://images.example.test/product.jpg',
-    'https://firebasestorage.googleapis.com/v0/b/untrusted-bucket/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test',
-    'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-b%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.jpg?alt=media&token=test',
-    'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2Fimage.svg?alt=media&token=test',
+    'http://images.example.test/product.jpg',
+    'javascript:alert(1)',
+    'data:image/png;base64,abc',
+    'https://user:password@images.example.test/product.jpg',
+    'not a URL',
   ];
   for (const image of invalidUrls) {
     const rejected = await withAuth(app).post('/api/seller/products').send(productPayload({
@@ -415,9 +413,31 @@ test('seller product creation requires seller-owned Firebase Storage image URLs'
     images: [],
   }));
   assert.equal(noImages.status, 400);
+
+  const accepted = await withAuth(app).post('/api/seller/products').send(productPayload({
+    images: ['https://cdn.example.test/front.jpg', 'https://cdn.example.test/back.png'],
+  }));
+  assert.equal(accepted.status, 201);
+  assert.equal(accepted.body.product.status, 'pending');
+  assert.deepEqual(accepted.body.product.images, [
+    'https://cdn.example.test/front.jpg',
+    'https://cdn.example.test/back.png',
+  ]);
+
+  const pendingProducts = await withAuth(app).get('/api/seller/products?status=pending');
+  assert.equal(pendingProducts.status, 200);
+  assert.equal(pendingProducts.body.count, 1);
+  assert.equal(pendingProducts.body.products[0].id, accepted.body.product.id);
+  assert.equal(pendingProducts.body.products[0].status, 'pending');
+
+  const adminPendingProducts = await withAuth(app, 'admin-token')
+    .get('/api/admin/products?status=pending');
+  assert.equal(adminPendingProducts.status, 200);
+  assert.equal(adminPendingProducts.body.products[0].id, accepted.body.product.id);
+  assert.deepEqual(adminPendingProducts.body.products[0].images, accepted.body.product.images);
 });
 
-test('seller product image updates preserve existing URLs and accept only owned Firebase uploads', async () => {
+test('seller product image updates accept valid HTTPS URLs and reject unsafe protocols', async () => {
   const app = makeApp();
   const complete = completeSeller();
   await withAuth(app).post('/api/seller/profile').send({
@@ -437,7 +457,7 @@ test('seller product image updates preserve existing URLs and accept only owned 
     price: 10,
     compareAtPrice: null,
   });
-  const uploadedImage = 'https://firebasestorage.googleapis.com/v0/b/sellerportal-2786c.firebasestorage.app/o/sellers%2Fseller-a%2Fproducts%2F123e4567-e89b-42d3-a456-426614174000.webp?alt=media&token=test-image-token';
+  const uploadedImage = 'https://cdn.example.test/new-product.webp';
   const update = await withAuth(app).patch(`/api/seller/products/${id}`).send({
     images: [legacyImage, uploadedImage],
   });
@@ -445,7 +465,7 @@ test('seller product image updates preserve existing URLs and accept only owned 
   assert.deepEqual(update.body.product.images, [legacyImage, uploadedImage]);
 
   const invalidUpdate = await withAuth(app).patch(`/api/seller/products/${id}`).send({
-    images: ['https://untrusted.example/image.jpg'],
+    images: ['javascript:alert(1)'],
   });
   assert.equal(invalidUpdate.status, 400);
 });
@@ -886,6 +906,7 @@ test('CORS origin configuration preserves required portals and parses configured
   assert.deepEqual(
     [...parseCorsOrigins(' http://localhost:3005, https://seller-lilac-five.vercel.app ,, ')],
     [
+      'https://seller-n14iroz5o-leeharshas-projects.vercel.app',
       'https://seller-lilac-five.vercel.app',
       'https://admin-portal-sepia-chi.vercel.app',
       'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
@@ -893,11 +914,13 @@ test('CORS origin configuration preserves required portals and parses configured
     ],
   );
   assert.deepEqual([...parseCorsOrigins(undefined)], [
+    'https://seller-n14iroz5o-leeharshas-projects.vercel.app',
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
     'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
     'http://localhost:3000',
     'http://localhost:3005',
+    'http://localhost:3001',
   ]);
   assert.equal(parseCorsOrigins('*,https://local.example.test').has('*'), false);
   assert.equal(parseCorsOrigins('https://local.example.test/').has('https://local.example.test'), false);

@@ -38,6 +38,18 @@ const variantSchema = z.object({
   attributes: z.record(z.string(), z.string()).optional(),
 }).passthrough();
 
+const productImageUrlSchema = z.string().trim().max(2048).url().refine((value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.hostname.length > 0
+      && !url.username
+      && !url.password;
+  } catch {
+    return false;
+  }
+}, 'Product image URLs must be valid HTTPS URLs without embedded credentials.');
+
 const productFields = {
   name: z.string().trim().min(2).max(200),
   description: z.string().max(10000).optional(),
@@ -51,14 +63,16 @@ const productFields = {
   discountPercent: z.number().finite().min(0).max(100).optional(),
   stock: z.number().int().nonnegative(),
   lowStockThreshold: z.number().int().nonnegative().optional(),
-  images: z.array(z.string().url().max(2048)).min(1).max(30).optional(),
+  images: z.array(productImageUrlSchema).min(1).max(30).optional(),
   variants: z.array(variantSchema).max(100).optional(),
   specifications: z.record(z.string(), z.string()).optional(),
 };
 
 export const createSellerProfileSchema = sellerProfileSchema;
 export const updateSellerProfileSchema = sellerProfileSchema;
-export const createProductSchema = z.object(productFields).strict();
+export const createProductSchema = z.object(productFields).strict().refine((product) => (
+  Array.isArray(product.images) && product.images.length > 0
+), { message: 'At least one HTTPS product image URL is required.', path: ['images'] });
 export const updateProductSchema = z.object(productFields).partial().strict()
   .refine((product) => Object.keys(product).length > 0, {
     message: 'At least one editable product field is required.',
