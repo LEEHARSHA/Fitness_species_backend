@@ -40,8 +40,21 @@ test('MongoDB collection initialization creates required collections idempotentl
   await mongo.ensureCollections(database);
   await mongo.ensureCollections(database);
 
-  assert.deepEqual(database.created, ['sellerProfiles']);
-  assert.deepEqual([...database.collections].sort(), ['products', 'sellerProfiles']);
+  assert.deepEqual(database.created, [
+    'sellerProfiles',
+    'communityOrganizers',
+    'communityEvents',
+    'communityRegistrations',
+    'communityModerationLogs',
+  ]);
+  assert.deepEqual([...database.collections].sort(), [
+    'communityEvents',
+    'communityModerationLogs',
+    'communityOrganizers',
+    'communityRegistrations',
+    'products',
+    'sellerProfiles',
+  ]);
 });
 
 test('MongoDB collection initialization tolerates concurrent collection creation', async () => {
@@ -73,5 +86,21 @@ test('MongoDB initialization creates required seller and product indexes', async
     index.name === 'products'
     && index.keys.status === 1
     && index.keys.createdAt === -1
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'communityEvents'
+    && index.keys.location === '2dsphere'
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'communityRegistrations'
+    && index.keys.eventId === 1
+    && index.keys.participantUid === 1
+    && index.options.unique === true
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'communityModerationLogs'
+    && index.keys.subjectType === 1
+    && index.keys.subjectId === 1
+    && index.keys.reviewedAt === -1
   )));
 });

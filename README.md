@@ -29,7 +29,7 @@ For production, prefer setting `FIREBASE_SERVICE_ACCOUNT_JSON` in the hosting pr
 
 ### MongoDB Atlas network access
 
-In Atlas, confirm the application database username exists under **Database Access** and has the `readWrite` role for only `fitness_species`. Under **Network Access**, allow the local machine's current public IP for local testing and update that entry when it changes. For Render, use the outbound IP addresses/ranges documented for the selected service, region, and plan; allow those production egress addresses, not an assumed Render service URL. Avoid `0.0.0.0/0` in production. Set the database user's URI in `.env` locally or in the host's encrypted environment configuration. The API pings MongoDB and creates its indexes at startup; a listening process alone is not considered ready.
+In Atlas, confirm the application database username exists under **Database Access** and has the `readWrite` role for only `fitness_species`. Under **Network Access**, allow the local machine's current public IP for local testing and update that entry when it changes. For Render, use the outbound IP addresses/ranges documented for the selected service, region, and plan; allow those production egress addresses, not an assumed Render service URL. Avoid `0.0.0.0/0` in production. Set the database user's URI in `.env` locally or in the host's encrypted environment configuration. The API pings MongoDB and creates required marketplace, community, and user indexes at startup; a listening process alone is not considered ready.
 
 ## Run locally
 
@@ -52,6 +52,7 @@ The response reports `database.name` and `database.status: connected` only after
 - `GET /api/seller/products`, `POST /api/seller/products`, `GET /api/seller/products/:productId`, `PATCH /api/seller/products/:productId` — seller-owned products
 - `GET /api/admin/products?status=pending`, `GET /api/admin/products/:productId`, `PATCH /api/admin/products/:productId/review` — admin review
 - `GET /api/products` and `GET /api/products/:productId` — approved public catalog only
+- `/api/community/*` — organizer applications, event review/public discovery, participant registrations, and registration history
 
 All protected routes require `Authorization: Bearer <Firebase ID token>`. The API verifies tokens against the configured Firebase project. Admin access is controlled only by the server's comma-separated `ADMIN_FIREBASE_UIDS` allowlist.
 
@@ -102,3 +103,13 @@ For production, configure the same `ADMIN_FIREBASE_UIDS` variable in the hosting
 Set `NEXT_PUBLIC_API_URL` in the Seller Portal and Admin Portal Vercel project settings to the backend base URL, for example `https://<your-render-service>.onrender.com` (do not append `/api`). Redeploy each frontend after changing the environment variable. The backend always allows the exact deployed Seller and Admin Portal origins; add any local browser development origins to `CORS_ORIGINS`.
 
 After deployment, test the health endpoint, sign in to each portal, save a seller profile, submit a product, and verify that it is visible only to its seller until an allowlisted admin reviews it. These end-to-end steps require real Firebase and MongoDB credentials and have not been run by the automated fixture tests.
+
+## Community organizer API
+
+The Organizer Portal and Fitness Species mobile app use the same `/api/community` backend and canonical MongoDB records. The backend creates `communityOrganizers`, `communityEvents`, `communityRegistrations`, and `communityModerationLogs` if missing, and ensures unique organizer/registration indexes, event status/date indexes, a `2dsphere` event-location index, and moderation-history indexes during the existing startup initialization. Coordinates are stored as GeoJSON points in `[longitude, latitude]` order.
+
+Public routes are `GET /api/community/events` and `GET /api/community/events/:eventId`. They return only approved events belonging to approved organizers; nearby searches use a server-side geospatial radius, with optional nearest-distance sorting. Authenticated Firebase routes include organizer apply/profile, event create/list/edit/submit/cancel, organizer-owned registration lists, participant registration/cancellation, and `GET /api/community/registrations/mine` for mobile joined-event history. Draft and pending-review events remain private. Creating and submitting events requires an approved organizer; approved-event edits return to pending review. Firebase UID ownership, participant identity, event status, capacity, deadlines, duplicate registrations, and admin permissions are enforced by the API, not browser state.
+
+Admin moderation is available in the Admin Portal at `/community` and is protected by `ADMIN_FIREBASE_UIDS`. Rejection and changes-requested actions require review notes; each successful organizer/event decision is recorded with its reason, reviewer UID, and timestamp. Administrators who also organize events cannot review their own applications or events. For a Vercel deployment, append the exact Organizer Portal origin to the existing comma-separated `CORS_ORIGINS` value; preserve all existing seller/admin origins. Do not use wildcard CORS. Do not change live Render or Firebase settings until the deployment owner approves the production configuration.
+
+The community backend test suite uses isolated in-memory fixtures and exercises approval gates, public visibility, event ownership, paid/free validation, geo radius/distance sorting, duplicate and capacity-protected registration, cancellation, and request limits. It does not connect to production MongoDB or Firebase.

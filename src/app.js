@@ -9,6 +9,7 @@ import progressRoutes from './routes/progress.routes.js';
 import bmiRoutes from './routes/bmi.routes.js';
 import waterRoutes from './routes/water.routes.js';
 import { createMarketplaceRoutes } from './marketplace/routes.js';
+import { createCommunityRoutes } from './community/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -130,6 +131,7 @@ export function createApp({
   app.use('/api/bmi', bmiRoutes);
   app.use('/api/water', waterRoutes);
   app.use('/api', createMarketplaceRoutes({ getDb, verifyIdToken, adminUids }));
+  app.use('/api/community', createCommunityRoutes({ getDb, verifyIdToken, adminUids }));
 
   app.use((_req, res) => {
     res.status(404).json({ success: false, message: 'Route not found.' });

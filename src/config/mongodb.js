@@ -6,7 +6,14 @@ let connectedDbName;
 let connectionState = 'disconnected';
 let connectionPromise;
 
-const requiredCollections = ['sellerProfiles', 'products'];
+const requiredCollections = [
+  'sellerProfiles',
+  'products',
+  'communityOrganizers',
+  'communityEvents',
+  'communityRegistrations',
+  'communityModerationLogs',
+];
 const requiredIndexes = {
   users: [
     { firebaseUid: 1 },
@@ -42,6 +49,27 @@ const requiredIndexes = {
   waterLogs: [
     { userId: 1, date: 1 },
   ],
+  communityOrganizers: [
+    { firebaseUid: 1 },
+    { status: 1, submittedAt: 1 },
+  ],
+  communityEvents: [
+    { organizerUid: 1, status: 1, startAt: 1 },
+    { status: 1, startAt: 1 },
+    { status: 1, category: 1, startAt: 1 },
+    { city: 1, startAt: 1 },
+    { postalCode: 1, startAt: 1 },
+    { location: '2dsphere' },
+  ],
+  communityRegistrations: [
+    { eventId: 1, participantUid: 1 },
+    { eventId: 1, status: 1 },
+    { participantUid: 1, status: 1 },
+  ],
+  communityModerationLogs: [
+    { subjectType: 1, subjectId: 1, reviewedAt: -1 },
+    { reviewedBy: 1, reviewedAt: -1 },
+  ],
 };
 
 async function ensureCollections(database, collectionNames = requiredCollections) {
@@ -65,6 +93,8 @@ async function ensureIndexes(database) {
     indexes.map((keys) => database.collection(collectionName).createIndex(keys, {
       ...(collectionName === 'users' || collectionName === 'sellers'
         || (collectionName === 'sellerProfiles' && keys.firebaseUid)
+        || (collectionName === 'communityOrganizers' && keys.firebaseUid)
+        || (collectionName === 'communityRegistrations' && keys.eventId && keys.participantUid)
         || (collectionName === 'waterLogs' && keys.userId && keys.date)
         ? { unique: true }
         : {}),
