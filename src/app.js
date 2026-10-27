@@ -18,6 +18,7 @@ const PRODUCTION_CORS_ORIGINS = [
   'https://seller-lilac-five.vercel.app',
   'https://admin-portal-sepia-chi.vercel.app',
   'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
+  'https://fitness-species-community.vercel.app',
 ];
 
 const DEFAULT_LOCAL_CORS_ORIGINS = [

@@ -837,6 +837,7 @@ test('CORS allows configured portals and rejects unexpected browser origins', as
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
     'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
+    'https://fitness-species-community.vercel.app',
   ];
   for (const origin of origins) {
     for (const status of ['pending', 'approved', 'rejected']) {
@@ -910,6 +911,7 @@ test('CORS origin configuration preserves required portals and parses configured
       'https://seller-lilac-five.vercel.app',
       'https://admin-portal-sepia-chi.vercel.app',
       'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
+      'https://fitness-species-community.vercel.app',
       'http://localhost:3005',
     ],
   );
@@ -918,6 +920,7 @@ test('CORS origin configuration preserves required portals and parses configured
     'https://seller-lilac-five.vercel.app',
     'https://admin-portal-sepia-chi.vercel.app',
     'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
+    'https://fitness-species-community.vercel.app',
     'http://localhost:3000',
     'http://localhost:3005',
     'http://localhost:3001',
