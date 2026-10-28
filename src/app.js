@@ -67,6 +67,8 @@ export function createApp({
   getDbName = mongo.getDbName,
   checkDB = mongo.checkDB,
   verifyIdToken = (token) => getAuth().verifyIdToken(token),
+  primaryFirebaseProjectId = process.env.FIREBASE_PROJECT_ID || 'sellerportal-2786c',
+  supportedFirebaseProjectIds = [primaryFirebaseProjectId],
   adminUids = (process.env.ADMIN_FIREBASE_UIDS || '')
     .split(',')
     .map((uid) => uid.trim())
@@ -131,8 +133,19 @@ export function createApp({
   app.use('/api/progress', progressRoutes);
   app.use('/api/bmi', bmiRoutes);
   app.use('/api/water', waterRoutes);
-  app.use('/api', createMarketplaceRoutes({ getDb, verifyIdToken, adminUids }));
-  app.use('/api/community', createCommunityRoutes({ getDb, verifyIdToken, adminUids }));
+  app.use('/api', createMarketplaceRoutes({
+    getDb,
+    verifyIdToken,
+    supportedFirebaseProjectIds: [primaryFirebaseProjectId],
+    adminUids,
+  }));
+  app.use('/api/community', createCommunityRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
+    adminUids,
+  }));
 
   app.use((_req, res) => {
     res.status(404).json({ success: false, message: 'Route not found.' });

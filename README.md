@@ -27,6 +27,8 @@ In Firebase Console, open project `sellerportal-2786c` → **Project settings** 
 
 For production, prefer setting `FIREBASE_SERVICE_ACCOUNT_JSON` in the hosting provider's encrypted environment settings rather than uploading a key file. It must contain the service-account JSON for `sellerportal-2786c`. Do not print or commit the JSON. The API validates the credential source and project ID and does not log credential values.
 
+The Android client currently uses Firebase project `project-fitness-species`. To enable its event registration routes, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
+
 ### MongoDB Atlas network access
 
 In Atlas, confirm the application database username exists under **Database Access** and has the `readWrite` role for only `fitness_species`. Under **Network Access**, allow the local machine's current public IP for local testing and update that entry when it changes. For Render, use the outbound IP addresses/ranges documented for the selected service, region, and plan; allow those production egress addresses, not an assumed Render service URL. Avoid `0.0.0.0/0` in production. Set the database user's URI in `.env` locally or in the host's encrypted environment configuration. The API pings MongoDB and creates required marketplace, community, and user indexes at startup; a listening process alone is not considered ready.
@@ -54,7 +56,11 @@ The response reports `database.name` and `database.status: connected` only after
 - `GET /api/products` and `GET /api/products/:productId` — approved public catalog only
 - `/api/community/*` — organizer applications, event review/public discovery, participant registrations, and registration history
 
-All protected routes require `Authorization: Bearer <Firebase ID token>`. The API verifies tokens against the configured Firebase project. Admin access is controlled only by the server's comma-separated `ADMIN_FIREBASE_UIDS` allowlist.
+Community registration endpoints require a Firebase ID token from an explicitly initialized Firebase project. Registration requires the participant's name, email, and phone; authenticated name/email claims are used as defaults when available. Participant identity combines the verified Firebase project ID and UID so same-valued UIDs from different projects cannot read or alter each other's registrations. Only primary-project accounts can manage organizer events, attendee lists, seller data, or administrator routes. `GET /api/community/events/:eventId/registrations` returns contact details only to the authenticated owner of that event.
+
+The backend's primary Firebase project is `FIREBASE_PROJECT_ID` (default `sellerportal-2786c`) and its Admin credentials must belong to that project. To also accept Android ID tokens from `project-fitness-species`, provision a second service account for that exact Firebase project as the Render secret `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` (or securely provision a file and set `GOOGLE_APPLICATION_CREDENTIALS_PROJECT_FITNESS_SPECIES`). Startup validates the second credential's `project_id`; the verifier only accepts tokens that Firebase Admin validates against one of the initialized apps. Do not list a project as supported without its matching credentials, and never weaken audience, issuer, signature, or expiry checks.
+
+All protected routes require `Authorization: Bearer <Firebase ID token>`. The API verifies tokens against the matching initialized Firebase project. Admin access is controlled only by the server's comma-separated `ADMIN_FIREBASE_UIDS` allowlist and primary-project authentication.
 
 New seller profiles are stored in `sellerProfiles`, which has a unique `firebaseUid` index. Existing records in the legacy `sellers` collection are read and updated in place to avoid duplicate profiles; the API does not migrate or delete existing seller records. Product ownership remains compatible with the existing `sellerId` field and new records also carry `sellerUid`. Sellers must complete all of these fields before submitting products: business name, owner/contact name, verified Firebase account email, phone, and business address, city, state, country, and postal code. The backend computes `profileComplete`; client-provided completion flags and identities are not trusted.
 
@@ -84,6 +90,7 @@ The automated tests use isolated fixtures and injected authentication/database a
    - `MONGODB_DB_NAME=fitness_species`
    - `FIREBASE_PROJECT_ID=sellerportal-2786c`
    - `FIREBASE_SERVICE_ACCOUNT_JSON` (secure JSON value) **or** `GOOGLE_APPLICATION_CREDENTIALS` pointing to a securely provisioned file
+   - `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` (secure service-account JSON for the Android app's `project-fitness-species` project)
    - `ADMIN_FIREBASE_UIDS`
    - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005,https://seller-lilac-five.vercel.app,https://admin-portal-sepia-chi.vercel.app,https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app,https://fitness-species-community.vercel.app`
 5. In Atlas, allow the Render service's outbound IP and verify `GET /api/health` returns HTTP 200 with `database.status: connected`. Do not treat a successful deployment or a listening port as proof of MongoDB connectivity.

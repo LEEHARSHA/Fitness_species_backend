@@ -36,6 +36,7 @@ function matches(document, query = {}) {
     if (expected && typeof expected === 'object' && !(expected instanceof Date)
       && !(expected instanceof ObjectId) && !Array.isArray(expected)) {
       if ('$exists' in expected) return (actual !== undefined) === expected.$exists;
+      if ('$type' in expected && expected.$type === 'date' && !(actual instanceof Date)) return false;
       if ('$gte' in expected && actual < expected.$gte) return false;
       if ('$lte' in expected && actual > expected.$lte) return false;
       if ('$lt' in expected && !(actual < expected.$lt)) return false;
@@ -165,6 +166,13 @@ const claims = {
     aud: 'sellerportal-2786c',
     iss: 'https://securetoken.google.com/sellerportal-2786c',
   },
+  'android-user-b': {
+    uid: 'user-b',
+    name: 'Android Participant B',
+    email: 'b.android@example.test',
+    aud: 'project-fitness-species',
+    iss: 'https://securetoken.google.com/project-fitness-species',
+  },
   admin: {
     uid: 'admin',
     email: 'admin@example.test',
@@ -182,6 +190,8 @@ function makeApp(adminUids = ['admin']) {
       if (!claims[token]) throw new Error('Invalid token');
       return claims[token];
     },
+    primaryFirebaseProjectId: 'sellerportal-2786c',
+    supportedFirebaseProjectIds: ['sellerportal-2786c', 'project-fitness-species'],
     adminUids,
   });
 }
@@ -301,10 +311,26 @@ test('approved organizers create drafts, events stay hidden until admin approval
   const submitted = await auth(app).post(`/api/community/events/${created.body.event.id}/submit`);
   assert.equal(submitted.status, 200);
   assert.equal(submitted.body.event.status, 'pending_review');
+  const pendingEvent = records.get('communityEvents')
+    .find((event) => String(event._id) === created.body.event.id);
+  assert.equal(pendingEvent.status, 'pending_review');
+  assert.equal(pendingEvent.publishedAt, null);
+  const pendingQueue = await auth(app, 'admin').get('/api/community/admin/events');
+  assert.equal(pendingQueue.status, 200);
+  assert.equal(pendingQueue.body.count, 1);
+  assert.equal(pendingQueue.body.events[0].id, created.body.event.id);
+  assert.equal(pendingQueue.body.events[0].status, 'pending_review');
+
   const approval = await auth(app, 'admin')
     .patch(`/api/community/admin/events/${created.body.event.id}/review`)
     .send({ status: 'approved' });
   assert.equal(approval.status, 200);
+  assert.equal(approval.body.event.status, 'approved');
+  assert.ok(approval.body.event.publishedAt);
+  assert.equal(approval.body.event.reviewNote, null);
+  assert.equal(pendingEvent.reviewedBy, 'admin');
+  assert.ok(pendingEvent.reviewedAt instanceof Date);
+  assert.ok(pendingEvent.publishedAt instanceof Date);
 
   const publicList = await request(app).get('/api/community/events');
   assert.equal(publicList.status, 200);
@@ -316,6 +342,20 @@ test('approved organizers create drafts, events stay hidden until admin approval
   const detail = await request(app).get(`/api/community/events/${created.body.event.id}`);
   assert.equal(detail.status, 200);
   assert.equal(detail.body.event.status, 'approved');
+});
+
+test('public discovery excludes approved events without a publication timestamp', async () => {
+  const app = makeApp();
+  const event = await approvedEvent(app);
+  const storedEvent = records.get('communityEvents')
+    .find((record) => String(record._id) === event.id);
+  storedEvent.publishedAt = null;
+
+  const publicList = await request(app).get('/api/community/events');
+  assert.equal(publicList.status, 200);
+  assert.equal(publicList.body.total, 0);
+  assert.deepEqual(publicList.body.events, []);
+  assert.equal((await request(app).get(`/api/community/events/${event.id}`)).status, 404);
 });
 
 test('organizers cannot modify each other’s events and approved edits return to review', async () => {
@@ -384,31 +424,81 @@ test('nearby discovery filters by server-side radius and excludes unpublished re
   assert.equal(response.body.events.some((event) => event.id === far.id), false);
 });
 
-test('registration enforces duplicate and capacity limits and exposes minimal participant data', async () => {
+test('registration requires contact details and persists verified user identity', async () => {
+  const app = makeApp();
+  const event = await approvedEvent(app);
+  const registrationPath = `/api/community/events/${event.id}/registrations`;
+  const missingPhone = await auth(app, 'user-b').post(registrationPath).send({});
+  assert.equal(missingPhone.status, 400);
+  assert.equal(missingPhone.body.code, 'CONTACT_DETAILS_REQUIRED');
+
+  const invalidEmail = await auth(app, 'user-b').post(registrationPath).send({
+    email: 'not-an-email',
+    phone: '+91 9876543210',
+  });
+  assert.equal(invalidEmail.status, 400);
+  const invalidPhone = await auth(app, 'user-b').post(registrationPath).send({
+    phone: '123',
+  });
+  assert.equal(invalidPhone.status, 400);
+
+  const registered = await auth(app, 'user-b').post(registrationPath).send({
+    phone: '+91 9876543210',
+  });
+  assert.equal(registered.status, 201);
+  const stored = records.get('communityRegistrations')[0];
+  assert.equal(stored.participantUid, 'user-b');
+  assert.equal(stored.participantName, 'Participant B');
+  assert.equal(stored.email, 'b@example.test');
+  assert.equal(stored.phone, '+91 9876543210');
+});
+
+test('registration enforces duplicate and capacity limits and exposes participant data only to the owner', async () => {
   const app = makeApp();
   const event = await approvedEvent(app, eventPayload({ capacity: 1 }));
   const registrationPath = `/api/community/events/${event.id}/registrations`;
-  const first = await auth(app, 'user-b').post(registrationPath).send({});
+  const contactDetails = {
+    participantName: 'Participant B',
+    email: 'b@example.test',
+    phone: '+91 9876543210',
+  };
+  const first = await auth(app, 'user-b').post(registrationPath).send(contactDetails);
   assert.equal(first.status, 201);
   assert.equal(first.body.registration.status, 'registered');
   const mine = await auth(app, 'user-b').get(`${registrationPath}/me`);
   assert.equal(mine.status, 200);
   assert.equal(mine.body.registration.status, 'registered');
 
-  const duplicate = await auth(app, 'user-b').post(registrationPath).send({});
+  const duplicate = await auth(app, 'user-b').post(registrationPath).send(contactDetails);
   assert.equal(duplicate.status, 409);
-  const full = await auth(app).post(registrationPath).send({});
+  const full = await auth(app).post(registrationPath).send({
+    participantName: 'Organizer A',
+    email: 'a@example.test',
+    phone: '+91 9876543211',
+  });
   assert.equal(full.status, 409);
+
+  const emptyList = await auth(app).get(`/api/community/events/${(await approvedEvent(app)).id}/registrations`);
+  assert.equal(emptyList.status, 200);
+  assert.equal(emptyList.body.total, 0);
 
   const organizerList = await auth(app).get(`${registrationPath}`);
   assert.equal(organizerList.status, 200);
   assert.equal(organizerList.body.registrations.length, 1);
   assert.deepEqual(Object.keys(organizerList.body.registrations[0]).sort(), [
+    'email',
     'id',
     'participantName',
+    'phone',
     'registeredAt',
     'status',
   ]);
+  assert.equal(organizerList.body.registrations[0].email, 'b@example.test');
+  assert.equal(organizerList.body.registrations[0].phone, '+91 9876543210');
+  assert.equal(
+    (await auth(app, 'user-b').get(`${registrationPath}`)).status,
+    404,
+  );
 
   const participantHistory = await auth(app, 'user-b').get('/api/community/registrations/mine');
   assert.equal(participantHistory.status, 200);
@@ -420,8 +510,70 @@ test('registration enforces duplicate and capacity limits and exposes minimal pa
   assert.equal(cancelled.body.registration.status, 'cancelled');
   const historyAfterCancellation = await auth(app, 'user-b').get('/api/community/registrations/mine');
   assert.equal(historyAfterCancellation.body.registrations[0].status, 'cancelled');
-  const reopenedCapacity = await auth(app).post(registrationPath).send({});
+  const reopenedCapacity = await auth(app).post(registrationPath).send({
+    participantName: 'Organizer A',
+    email: 'a@example.test',
+    phone: '+91 9876543211',
+  });
   assert.equal(reopenedCapacity.status, 201);
+});
+
+test('registration rejects nonexistent and approved-but-unpublished events', async () => {
+  const app = makeApp();
+  const missing = await auth(app, 'user-b')
+    .post('/api/community/events/64b000000000000000000000/registrations')
+    .send({ participantName: 'Participant B', email: 'b@example.test', phone: '+91 9876543210' });
+  assert.equal(missing.status, 404);
+
+  const event = await approvedEvent(app);
+  const storedEvent = records.get('communityEvents')
+    .find((record) => String(record._id) === event.id);
+  storedEvent.publishedAt = null;
+  const unpublished = await auth(app, 'user-b')
+    .post(`/api/community/events/${event.id}/registrations`)
+    .send({ participantName: 'Participant B', email: 'b@example.test', phone: '+91 9876543210' });
+  assert.equal(unpublished.status, 404);
+});
+
+test('secondary Firebase participants are isolated by project and cannot use organizer or admin routes', async () => {
+  const app = makeApp();
+  const event = await approvedEvent(app);
+  const registrationPath = `/api/community/events/${event.id}/registrations`;
+  const primaryRegistration = await auth(app, 'user-b').post(registrationPath).send({
+    phone: '+91 9876543210',
+  });
+  assert.equal(primaryRegistration.status, 201);
+
+  const secondaryRegistration = await auth(app, 'android-user-b').post(registrationPath).send({
+    phone: '+91 9876543211',
+  });
+  assert.equal(secondaryRegistration.status, 201);
+  assert.deepEqual(
+    records.get('communityRegistrations')
+      .map(({ participantUid, participantProjectId }) => ({ participantUid, participantProjectId }))
+      .sort((left, right) => left.participantProjectId.localeCompare(right.participantProjectId)),
+    [
+      { participantUid: 'user-b', participantProjectId: 'project-fitness-species' },
+      { participantUid: 'user-b', participantProjectId: 'sellerportal-2786c' },
+    ],
+  );
+
+  const primaryHistory = await auth(app, 'user-b').get('/api/community/registrations/mine');
+  const secondaryHistory = await auth(app, 'android-user-b').get('/api/community/registrations/mine');
+  assert.equal(primaryHistory.body.total, 1);
+  assert.equal(secondaryHistory.body.total, 1);
+  assert.equal(
+    (await auth(app, 'android-user-b').get(registrationPath)).status,
+    401,
+  );
+  assert.equal(
+    (await auth(app, 'android-user-b').get('/api/community/organizers/me')).status,
+    401,
+  );
+  assert.equal(
+    (await auth(app, 'android-user-b').get('/api/community/admin/events')).status,
+    401,
+  );
 });
 
 test('organizer application endpoint limits repeated requests', async () => {

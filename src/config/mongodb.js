@@ -62,7 +62,7 @@ const requiredIndexes = {
     { location: '2dsphere' },
   ],
   communityRegistrations: [
-    { eventId: 1, participantUid: 1 },
+    { eventId: 1, participantProjectId: 1, participantUid: 1 },
     { eventId: 1, status: 1 },
     { participantUid: 1, status: 1 },
   ],
@@ -89,12 +89,26 @@ async function ensureCollections(database, collectionNames = requiredCollections
 }
 
 async function ensureIndexes(database) {
+  const registrations = database.collection('communityRegistrations');
+  const existingRegistrationIndexes = await registrations.listIndexes().toArray();
+  for (const index of existingRegistrationIndexes) {
+    if (
+      index.unique
+      && index.key?.eventId === 1
+      && index.key?.participantUid === 1
+      && Object.keys(index.key).length === 2
+    ) {
+      await registrations.dropIndex(index.name);
+    }
+  }
+
   const indexOperations = Object.entries(requiredIndexes).flatMap(([collectionName, indexes]) => (
     indexes.map((keys) => database.collection(collectionName).createIndex(keys, {
       ...(collectionName === 'users' || collectionName === 'sellers'
         || (collectionName === 'sellerProfiles' && keys.firebaseUid)
         || (collectionName === 'communityOrganizers' && keys.firebaseUid)
-        || (collectionName === 'communityRegistrations' && keys.eventId && keys.participantUid)
+        || (collectionName === 'communityRegistrations'
+          && keys.eventId && keys.participantProjectId && keys.participantUid)
         || (collectionName === 'waterLogs' && keys.userId && keys.date)
         ? { unique: true }
         : {}),

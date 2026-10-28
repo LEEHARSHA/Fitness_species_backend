@@ -224,6 +224,12 @@ export const registrationQuerySchema = z.object({
   limit: pageSize,
 });
 
+export const eventRegistrationSchema = z.object({
+  participantName: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().email().max(160).optional().or(z.literal('')),
+  phone: z.string().trim().min(7).max(40).optional().or(z.literal('')),
+}).strict();
+
 export const publicEventQuerySchema = z.object({
   search: z.string().trim().min(1).max(100).optional(),
   city: z.string().trim().min(1).max(100).optional(),

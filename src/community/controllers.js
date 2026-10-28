@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import {
   adminReviewSchema,
   createEventSchema,
+  eventRegistrationSchema,
   eventStatuses,
   organizerApplicationSchema,
   organizerStatuses,
@@ -25,6 +26,22 @@ function invalid(res, result) {
 
 function validObjectId(value) {
   return /^[a-f\d]{24}$/i.test(value) && ObjectId.isValid(value);
+}
+
+function registrationParticipantFilter(user, primaryProjectId, filter = {}) {
+  const projectId = user.firebaseProjectId || primaryProjectId;
+  return {
+    ...filter,
+    participantUid: user.uid,
+    ...(projectId === primaryProjectId
+      ? {
+        $or: [
+          { participantProjectId: primaryProjectId },
+          { participantProjectId: { $exists: false } },
+        ],
+      }
+      : { participantProjectId: projectId }),
+  };
 }
 
 function displayName(organizer) {
@@ -142,6 +159,7 @@ function makeEventDocument(input, uid, now) {
 function eventQueryFilter(query) {
   const filter = {
     status: 'approved',
+    publishedAt: { $type: 'date' },
     startAt: { $gte: query.startDate ? new Date(query.startDate) : new Date() },
   };
   if (query.category) filter.category = query.category;
@@ -171,7 +189,10 @@ function eventQueryFilter(query) {
   return filter;
 }
 
-export function createCommunityControllers({ getDb }) {
+export function createCommunityControllers({
+  getDb,
+  primaryFirebaseProjectId = process.env.FIREBASE_PROJECT_ID || 'sellerportal-2786c',
+}) {
   const applyAsOrganizer = asyncRoute(async (req, res) => {
     const result = organizerApplicationSchema.safeParse(req.body);
     if (!result.success) return invalid(res, result);
@@ -506,7 +527,9 @@ export function createCommunityControllers({ getDb }) {
       limit: pagination.data.limit,
       registrations: registrations.map((registration) => ({
         id: registration._id.toString(),
-        participantName: registration.participantName || 'Participant',
+        participantName: registration.participantName || '',
+        email: registration.email || '',
+        phone: registration.phone || '',
         status: registration.status,
         registeredAt: registration.registeredAt,
       })),
@@ -518,10 +541,32 @@ export function createCommunityControllers({ getDb }) {
       res.status(400).json({ success: false, message: 'Invalid event ID.' });
       return;
     }
+    const regResult = eventRegistrationSchema.safeParse(req.body || {});
+    if (!regResult.success) return invalid(res, regResult);
+    const contactResult = eventRegistrationSchema.safeParse({
+      participantName: regResult.data.participantName || req.user.name || undefined,
+      email: regResult.data.email || req.user.email || undefined,
+      phone: regResult.data.phone || undefined,
+    });
+    if (!contactResult.success) return invalid(res, contactResult);
+    const { participantName, email, phone } = contactResult.data;
+    if (!participantName || !email || !phone) {
+      res.status(400).json({
+        success: false,
+        code: 'CONTACT_DETAILS_REQUIRED',
+        message: 'Provide your full name, email address, and phone number to register.',
+      });
+      return;
+    }
+
     const db = getDb();
     const events = db.collection('communityEvents');
     const eventId = new ObjectId(req.params.eventId);
-    const event = await events.findOne({ _id: eventId, status: 'approved' });
+    const event = await events.findOne({
+      _id: eventId,
+      status: 'approved',
+      publishedAt: { $type: 'date' },
+    });
     if (!event) {
       res.status(404).json({ success: false, message: 'This event is not open for registration.' });
       return;
@@ -535,10 +580,12 @@ export function createCommunityControllers({ getDb }) {
       return;
     }
     const registrations = db.collection('communityRegistrations');
-    const existing = await registrations.findOne({
-      eventId,
-      participantUid: req.user.uid,
-    });
+    const identityFilter = registrationParticipantFilter(
+      req.user,
+      primaryFirebaseProjectId,
+      { eventId },
+    );
+    const existing = await registrations.findOne(identityFilter);
     if (existing?.status === 'registered') {
       res.status(409).json({ success: false, message: 'You are already registered for this event.' });
       return;
@@ -564,7 +611,10 @@ export function createCommunityControllers({ getDb }) {
     const registration = {
       eventId,
       participantUid: req.user.uid,
-      participantName: req.user.name || 'Participant',
+      participantProjectId: req.user.firebaseProjectId || primaryFirebaseProjectId,
+      participantName,
+      email,
+      phone,
       status: 'registered',
       registeredAt: now,
       updatedAt: now,
@@ -618,7 +668,10 @@ export function createCommunityControllers({ getDb }) {
       return;
     }
     const registration = await db.collection('communityRegistrations').findOneAndUpdate(
-      { eventId, participantUid: req.user.uid, status: 'registered' },
+      registrationParticipantFilter(req.user, primaryFirebaseProjectId, {
+        eventId,
+        status: 'registered',
+      }),
       { $set: { status: 'cancelled', updatedAt: new Date() } },
       { returnDocument: 'after' },
     );
@@ -639,8 +692,9 @@ export function createCommunityControllers({ getDb }) {
       return;
     }
     const registration = await getDb().collection('communityRegistrations').findOne({
-      eventId: new ObjectId(req.params.eventId),
-      participantUid: req.user.uid,
+      ...registrationParticipantFilter(req.user, primaryFirebaseProjectId, {
+        eventId: new ObjectId(req.params.eventId),
+      }),
     });
     if (!registration) {
       res.status(404).json({ success: false, code: 'REGISTRATION_NOT_FOUND', message: 'Registration not found.' });
@@ -659,7 +713,7 @@ export function createCommunityControllers({ getDb }) {
     const pagination = registrationQuerySchema.safeParse(req.query);
     if (!pagination.success) return invalid(res, pagination);
     const db = getDb();
-    const filter = { participantUid: req.user.uid };
+    const filter = registrationParticipantFilter(req.user, primaryFirebaseProjectId);
     const [registrations, total] = await Promise.all([
       db.collection('communityRegistrations').find(filter)
       .sort({ registeredAt: -1 })
@@ -880,7 +934,10 @@ export function createCommunityControllers({ getDb }) {
     const db = getDb();
     const event = await db.collection('communityEvents').findOne({
       _id: new ObjectId(req.params.eventId),
-      status: { $in: ['approved', 'cancelled'] },
+      $or: [
+        { status: 'cancelled' },
+        { status: 'approved', publishedAt: { $type: 'date' } },
+      ],
     });
     if (!event) {
       res.status(404).json({ success: false, message: 'Event not found.' });

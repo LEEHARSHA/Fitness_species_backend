@@ -5,7 +5,14 @@ import { createApp } from './app.js';
 
 const { initFirebase } = firebase;
 const { connectDB, initializeDB, getDb, getDbStatus, checkDB, closeDB } = mongo;
-const app = createApp({ getDb, getDbStatus, checkDB });
+const app = createApp({
+  getDb,
+  getDbStatus,
+  checkDB,
+  verifyIdToken: firebase.verifyFirebaseIdToken,
+  primaryFirebaseProjectId: process.env.FIREBASE_PROJECT_ID || 'sellerportal-2786c',
+  supportedFirebaseProjectIds: firebase.getConfiguredFirebaseProjectIds(),
+});
 const port = Number(process.env.PORT || 5000);
 let server;
 

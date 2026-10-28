@@ -232,6 +232,83 @@ test('rejects missing, malformed, invalid, and wrong-project Firebase tokens', a
   assert.equal((await withAuth(wrongProjectApp).get('/api/seller/profile')).status, 401);
 });
 
+test('classifies Firebase token failures without logging tokens or user details', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...values) => warnings.push(values);
+  try {
+    const app = createApp({
+      getDb: () => ({ collection: () => new TestCollection('sellers') }),
+      getDbStatus: () => 'connected',
+      verifyIdToken: async (token) => {
+        if (token === 'expired-token') {
+          const error = new Error('expiration details must not be logged');
+          error.code = 'auth/id-token-expired';
+          throw error;
+        }
+        if (token === 'wrong-project-token') {
+          throw new Error('Firebase ID token has incorrect audience.');
+        }
+        throw new Error('invalid token details must not be logged');
+      },
+    });
+    const missing = await request(app).get('/api/seller/profile');
+    const malformed = await request(app).get('/api/seller/profile')
+      .set('Authorization', 'Basic secret-value');
+    const expired = await request(app).get('/api/seller/profile')
+      .set('Authorization', 'Bearer expired-token');
+    const wrongProject = await request(app).get('/api/seller/profile')
+      .set('Authorization', 'Bearer wrong-project-token');
+    const invalid = await request(app).get('/api/seller/profile')
+      .set('Authorization', 'Bearer invalid-token');
+
+    assert.equal(missing.body.code, 'AUTH_REQUIRED');
+    assert.equal(malformed.body.code, 'AUTH_REQUIRED');
+    assert.equal(expired.body.code, 'TOKEN_EXPIRED');
+    assert.equal(wrongProject.body.code, 'TOKEN_INVALID');
+    assert.equal(invalid.body.code, 'TOKEN_INVALID');
+
+    const logText = JSON.stringify(warnings);
+    assert.match(logText, /missing_authorization_header/);
+    assert.match(logText, /malformed_authorization_header/);
+    assert.match(logText, /expired_token/);
+    assert.match(logText, /firebase_project_mismatch/);
+    assert.match(logText, /invalid_token/);
+    assert.doesNotMatch(logText, /secret-value|expired-token|invalid-token|expiration details|user@example\.test/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('secondary Firebase project tokens cannot access seller endpoints', async () => {
+  const projectIds = ['sellerportal-2786c', 'project-fitness-species'];
+  const app = createApp({
+    getDb: () => ({ collection: () => new TestCollection('sellers') }),
+    getDbStatus: () => 'connected',
+    verifyIdToken: async (token) => {
+      if (token === 'android-token') {
+        return {
+          uid: 'android-user',
+          aud: 'project-fitness-species',
+          iss: 'https://securetoken.google.com/project-fitness-species',
+        };
+      }
+      return {
+        uid: 'unconfigured-user',
+        aud: 'unconfigured-project',
+        iss: 'https://securetoken.google.com/unconfigured-project',
+      };
+    },
+    supportedFirebaseProjectIds: projectIds,
+  });
+
+  const androidRequest = await withAuth(app, 'android-token').get('/api/seller/profile');
+  assert.equal(androidRequest.status, 401);
+
+  const unsupportedRequest = await withAuth(app, 'unsupported-token').get('/api/seller/profile');
+  assert.equal(unsupportedRequest.status, 401);
+});
+
 test('missing seller profiles return an explicit setup-required response', async () => {
   const app = makeApp();
   const missing = await withAuth(app).get('/api/seller/profile');
