@@ -989,6 +989,7 @@ test('CORS origin configuration preserves required portals and parses configured
       'https://admin-portal-sepia-chi.vercel.app',
       'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
       'https://fitness-species-community.vercel.app',
+      'https://doctors-webpage-three.vercel.app',
       'http://localhost:3005',
     ],
   );
@@ -998,6 +999,7 @@ test('CORS origin configuration preserves required portals and parses configured
     'https://admin-portal-sepia-chi.vercel.app',
     'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
     'https://fitness-species-community.vercel.app',
+    'https://doctors-webpage-three.vercel.app',
     'http://localhost:3000',
     'http://localhost:3005',
     'http://localhost:3001',

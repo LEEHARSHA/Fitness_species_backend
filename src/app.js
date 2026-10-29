@@ -10,6 +10,7 @@ import bmiRoutes from './routes/bmi.routes.js';
 import waterRoutes from './routes/water.routes.js';
 import { createMarketplaceRoutes } from './marketplace/routes.js';
 import { createCommunityRoutes } from './community/routes.js';
+import { createDoctorRoutes } from './doctors/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -19,6 +20,7 @@ const PRODUCTION_CORS_ORIGINS = [
   'https://admin-portal-sepia-chi.vercel.app',
   'https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app',
   'https://fitness-species-community.vercel.app',
+  'https://doctors-webpage-three.vercel.app',
 ];
 
 const DEFAULT_LOCAL_CORS_ORIGINS = [
@@ -144,6 +146,12 @@ export function createApp({
     verifyIdToken,
     primaryFirebaseProjectId,
     supportedFirebaseProjectIds,
+    adminUids,
+  }));
+  app.use('/api', createDoctorRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
     adminUids,
   }));
 

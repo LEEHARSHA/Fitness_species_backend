@@ -13,6 +13,7 @@ const requiredCollections = [
   'communityEvents',
   'communityRegistrations',
   'communityModerationLogs',
+  'doctorApplications',
 ];
 const requiredIndexes = {
   users: [
@@ -70,6 +71,13 @@ const requiredIndexes = {
     { subjectType: 1, subjectId: 1, reviewedAt: -1 },
     { reviewedBy: 1, reviewedAt: -1 },
   ],
+  doctorApplications: [
+    { firebaseProjectId: 1, firebaseUid: 1 },
+    { status: 1, submittedAt: 1 },
+    { status: 1, citySearch: 1, fullName: 1 },
+    { status: 1, primarySpecialtySearch: 1, fullName: 1 },
+    { status: 1, additionalSpecialtiesSearch: 1, fullName: 1 },
+  ],
 };
 
 async function ensureCollections(database, collectionNames = requiredCollections) {
@@ -107,6 +115,8 @@ async function ensureIndexes(database) {
       ...(collectionName === 'users' || collectionName === 'sellers'
         || (collectionName === 'sellerProfiles' && keys.firebaseUid)
         || (collectionName === 'communityOrganizers' && keys.firebaseUid)
+        || (collectionName === 'doctorApplications'
+          && keys.firebaseProjectId && keys.firebaseUid)
         || (collectionName === 'communityRegistrations'
           && keys.eventId && keys.participantProjectId && keys.participantUid)
         || (collectionName === 'waterLogs' && keys.userId && keys.date)

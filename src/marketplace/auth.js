@@ -54,6 +54,7 @@ export function requireFirebaseAuth(
         uid: claims.uid,
         firebaseProjectId: claims.aud,
         email: typeof claims.email === 'string' ? claims.email : null,
+        emailVerified: claims.email_verified === true,
         name: typeof claims.name === 'string' ? claims.name : null,
       };
       next();

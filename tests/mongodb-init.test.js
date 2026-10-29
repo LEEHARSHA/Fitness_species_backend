@@ -58,12 +58,14 @@ test('MongoDB collection initialization creates required collections idempotentl
     'communityEvents',
     'communityRegistrations',
     'communityModerationLogs',
+    'doctorApplications',
   ]);
   assert.deepEqual([...database.collections].sort(), [
     'communityEvents',
     'communityModerationLogs',
     'communityOrganizers',
     'communityRegistrations',
+    'doctorApplications',
     'products',
     'sellerProfiles',
   ]);
@@ -80,9 +82,10 @@ test('MongoDB collection initialization tolerates concurrent collection creation
   await assert.doesNotReject(mongo.ensureCollections(database));
 });
 
-test('MongoDB initialization creates required seller and product indexes', async () => {
+test('MongoDB index initialization is repeatable and creates required indexes', async () => {
   const database = fakeDatabase();
   await mongo.ensureIndexes(database);
+  await assert.doesNotReject(mongo.ensureIndexes(database));
 
   assert.ok(database.indexes.some((index) => (
     index.name === 'sellerProfiles'
@@ -115,6 +118,17 @@ test('MongoDB initialization creates required seller and product indexes', async
     && index.keys.subjectType === 1
     && index.keys.subjectId === 1
     && index.keys.reviewedAt === -1
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'doctorApplications'
+    && index.keys.firebaseProjectId === 1
+    && index.keys.firebaseUid === 1
+    && index.options.unique === true
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'doctorApplications'
+    && index.keys.status === 1
+    && index.keys.submittedAt === 1
   )));
 });
 

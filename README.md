@@ -45,7 +45,7 @@ The API binds to `0.0.0.0` and uses `PORT` (default `5000`). Check readiness:
 Invoke-RestMethod http://localhost:5000/api/health
 ```
 
-The response reports `database.name` and `database.status: connected` only after a real MongoDB ping. A database outage returns HTTP 503. Startup fails rather than opening an HTTP listener when MongoDB cannot be reached. Startup initialization creates missing `sellerProfiles` and `products` collections without replacing existing collections, then ensures the application indexes.
+The response reports `database.name` and `database.status: connected` only after a real MongoDB ping. A database outage returns HTTP 503. Startup fails rather than opening an HTTP listener when MongoDB cannot be reached. Startup initialization creates required marketplace, community, and doctor collections without replacing existing collections, then ensures the application indexes.
 
 ## API overview
 
@@ -55,6 +55,11 @@ The response reports `database.name` and `database.status: connected` only after
 - `GET /api/admin/products?status=pending`, `GET /api/admin/products/:productId`, `PATCH /api/admin/products/:productId/review` — admin review
 - `GET /api/products` and `GET /api/products/:productId` — approved public catalog only
 - `/api/community/*` — organizer applications, event review/public discovery, participant registrations, and registration history
+- `GET /api/doctors`, `GET /api/doctors/:id` — approved doctor directory and detail
+- `GET /api/doctors/me`, `PUT /api/doctors/me`, `POST /api/doctors/me/submit` — authenticated doctor profile lifecycle
+- `GET /api/admin/doctors`, `GET /api/admin/doctors/:id`, `PATCH /api/admin/doctors/:id/review` — allowlisted administrator review
+
+Doctor applications are stored in `doctorApplications`, uniquely scoped by Firebase project ID and UID. Doctor routes accept only primary-project Firebase ID tokens; submission requires a verified Firebase email claim. Applications begin as drafts, can be submitted after required profile and availability validation, and can be edited only while draft or changes-requested. Rejected applications cannot be resubmitted. Administrators use the existing `ADMIN_FIREBASE_UIDS` allowlist to approve, reject, request changes, suspend approved doctors, and reactivate suspended doctors; decisions and reviewer identifiers are recorded in server-controlled review history. Public doctor responses are explicit projections of approved profiles and exclude registration numbers, contact details, Firebase identifiers, and review data. Directory queries support `specialty`, `city`, `page`, and `limit`. Add the Doctor Portal's exact production origin to the existing CORS configuration before browser deployment without removing current portal origins. This phase does not collect Aadhaar data or support document uploads.
 
 Community registration endpoints require a Firebase ID token from an explicitly initialized Firebase project. Registration requires the participant's name, email, and phone; authenticated name/email claims are used as defaults when available. Participant identity combines the verified Firebase project ID and UID so same-valued UIDs from different projects cannot read or alter each other's registrations. Only primary-project accounts can manage organizer events, attendee lists, seller data, or administrator routes. `GET /api/community/events/:eventId/registrations` returns contact details only to the authenticated owner of that event.
 
