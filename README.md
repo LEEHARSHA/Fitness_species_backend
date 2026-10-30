@@ -58,8 +58,41 @@ The response reports `database.name` and `database.status: connected` only after
 - `GET /api/doctors`, `GET /api/doctors/:id` — approved doctor directory and detail
 - `GET /api/doctors/me`, `PUT /api/doctors/me`, `POST /api/doctors/me/submit` — authenticated doctor profile lifecycle
 - `GET /api/admin/doctors`, `GET /api/admin/doctors/:id`, `PATCH /api/admin/doctors/:id/review` — allowlisted administrator review
+- `/api/doctor-portal/*` — additive hospital management, doctor invitations, public hospital-doctor discovery, and appointment APIs
 
 Doctor applications are stored in `doctorApplications`, uniquely scoped by Firebase project ID and UID. Doctor routes accept only primary-project Firebase ID tokens; submission requires a verified Firebase email claim. Applications begin as drafts, can be submitted after required profile and availability validation, and can be edited only while draft or changes-requested. Rejected applications cannot be resubmitted. Administrators use the existing `ADMIN_FIREBASE_UIDS` allowlist to approve, reject, request changes, suspend approved doctors, and reactivate suspended doctors; decisions and reviewer identifiers are recorded in server-controlled review history. Public doctor responses are explicit projections of approved profiles and exclude registration numbers, contact details, Firebase identifiers, and review data. Directory queries support `specialty`, `city`, `page`, and `limit`. Add the Doctor Portal's exact production origin to the existing CORS configuration before browser deployment without removing current portal origins. This phase does not collect Aadhaar data or support document uploads.
+
+## Doctor Portal API
+
+The Doctor Portal API is a separate, additive namespace. It does not change the existing `/api/doctors`, Android event APIs, or their request/response contracts. Protected routes use Firebase ID tokens in `Authorization: Bearer <token>`; hospital administration, doctor management, and appointment access accept only the primary Firebase project. Organization approval and doctor approval are controlled by the existing `ADMIN_FIREBASE_UIDS` allowlist. Public discovery routes require no token.
+
+| Method and path | Access | Purpose |
+|---|---|---|
+| `POST /api/doctor-portal/organizations` | Primary-project account | Register a hospital or clinic; starts pending review |
+| `GET`, `PATCH /api/doctor-portal/organizations/me` | Organization administrator | Read or update the administrator's organization |
+| `GET /api/doctor-portal/organizations/doctors` | Organization administrator | List/search hospital doctors |
+| `POST /api/doctor-portal/organizations/doctors` | Organization administrator | Add a doctor (pending review) |
+| `PATCH /api/doctor-portal/organizations/doctors/:doctorId` | Organization administrator | Update a doctor profile |
+| `PATCH /api/doctor-portal/organizations/doctors/:doctorId/active` | Organization administrator | Activate/deactivate a doctor |
+| `DELETE /api/doctor-portal/organizations/doctors/:doctorId` | Organization administrator | Remove a doctor from the organization |
+| `GET`, `POST /api/doctor-portal/organizations/departments` | Organization administrator | List/create departments |
+| `PATCH`, `DELETE /api/doctor-portal/organizations/departments/:departmentId` | Organization administrator | Update/deactivate a department |
+| `GET /api/doctor-portal/doctors`, `GET /api/doctor-portal/doctors/:doctorId` | Public | Discover approved, active hospital doctors; responses omit DOB, gender, registration numbers, and direct contact details |
+| `POST /api/doctor-portal/invitations/accept` | Verified primary-project account | Link an approved hospital-doctor profile by matching its email |
+| `POST /api/doctor-portal/appointments/book` | Configured Firebase project | Book an approved provider after explicit patient consent |
+| `GET /api/doctor-portal/appointments`, `GET /api/doctor-portal/appointments/:appointmentId` | Authorized doctor or hospital administrator | List/filter or read appointments within the caller's scope |
+| `PATCH /api/doctor-portal/appointments/:appointmentId/status` | Authorized doctor or hospital administrator | Confirm, complete, cancel, or mark no-show, subject to allowed transitions |
+| `PATCH /api/doctor-portal/appointments/:appointmentId/reschedule` | Authorized doctor or hospital administrator | Reschedule a requested or confirmed appointment |
+| `GET /api/doctor-portal/admin/organizations/pending`, `PATCH /api/doctor-portal/admin/organizations/:organizationId/review` | Allowlisted primary-project administrator | Review organizations |
+| `GET /api/doctor-portal/admin/hospital-doctors/pending`, `PATCH /api/doctor-portal/admin/hospital-doctors/:doctorId/review` | Allowlisted primary-project administrator | Review hospital doctors |
+
+JSON request bodies are strict and reject unknown fields. Organization registration requires `name`, `organizationType`, `email`, `phone`, `address`, `city`, `state`, `registrationNumber`, `adminName`, and `adminDesignation`; `website`, `logoUrl`, `description`, and `facilities` are optional. Hospital-doctor creation requires the identity/demographic, contact, specialization, qualification/registration, experience, fee, daily limit, consultation mode, and availability fields defined by `hospitalDoctorSchema` in `src/doctor-portal/validation.js`. Department bodies use `name` and optional `description`. Use the validation schema as the source of truth for all exact bounds and enums.
+
+Appointment booking requires `doctorId`, `patientName`, ISO date `appointmentDate`, 24-hour `appointmentTime`, `appointmentType` (`online` or `in_person`), and `patientConsent: true`; optional patient fields are `patientGender` and `patientAgeAtBooking`. Rescheduling requires `appointmentDate` and `appointmentTime`. Status updates require a `status`; cancellation and no-show updates also require a `reason`. Appointment listing supports `from`, `to`, `doctorId`, `departmentId`, `status`, `appointmentType`, `search`, `page`, and `limit`. Successful booking returns HTTP 201 and `{ success, appointment }`; list responses return `{ success, appointments, total, page, limit }`. Validation errors return HTTP 400 with `message` and field `issues`; unavailable, full, and conflicting slots return HTTP 409 with a machine-readable `code`.
+
+The backend creates `doctorPortalOrganizations`, `doctorPortalDoctors`, `doctorPortalDepartments`, `doctorPortalAppointments`, `doctorPortalDailyCapacity`, and `doctorPortalAuditLogs` without altering legacy collections. Unique indexes enforce organization-admin ownership, doctor-account assignment, and per-minute doctor slot exclusivity. Daily appointment limits use atomic per-doctor/per-date counters. Appointment reads and mutations are scoped server-side to the assigned doctor, individual approved doctor, or hospital organization; client-supplied identity and role data are not trusted. Successful booking, review, invitation, and appointment-management actions are audit logged.
+
+The inspected Android source has no hospital-doctor discovery or appointment-booking backend integration. These endpoints are not an Android API migration: Android clients must explicitly adopt the new public discovery and booking contract before they can use it. To accept booking tokens from another Firebase project, initialize and validate that project's Firebase Admin credentials at startup and include its ID in `supportedFirebaseProjectIds`; do not change the primary-project authentication requirements for portal administration.
 
 Community registration endpoints require a Firebase ID token from an explicitly initialized Firebase project. Registration requires the participant's name, email, and phone; authenticated name/email claims are used as defaults when available. Participant identity combines the verified Firebase project ID and UID so same-valued UIDs from different projects cannot read or alter each other's registrations. Only primary-project accounts can manage organizer events, attendee lists, seller data, or administrator routes. `GET /api/community/events/:eventId/registrations` returns contact details only to the authenticated owner of that event.
 

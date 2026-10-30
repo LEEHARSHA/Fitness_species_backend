@@ -11,6 +11,7 @@ import waterRoutes from './routes/water.routes.js';
 import { createMarketplaceRoutes } from './marketplace/routes.js';
 import { createCommunityRoutes } from './community/routes.js';
 import { createDoctorRoutes } from './doctors/routes.js';
+import { createDoctorPortalRoutes } from './doctor-portal/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -152,6 +153,13 @@ export function createApp({
     getDb,
     verifyIdToken,
     primaryFirebaseProjectId,
+    adminUids,
+  }));
+  app.use('/api/doctor-portal', createDoctorPortalRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
     adminUids,
   }));
 

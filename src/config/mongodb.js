@@ -14,6 +14,12 @@ const requiredCollections = [
   'communityRegistrations',
   'communityModerationLogs',
   'doctorApplications',
+  'doctorPortalOrganizations',
+  'doctorPortalDoctors',
+  'doctorPortalDepartments',
+  'doctorPortalAppointments',
+  'doctorPortalDailyCapacity',
+  'doctorPortalAuditLogs',
 ];
 const requiredIndexes = {
   users: [
@@ -78,6 +84,35 @@ const requiredIndexes = {
     { status: 1, primarySpecialtySearch: 1, fullName: 1 },
     { status: 1, additionalSpecialtiesSearch: 1, fullName: 1 },
   ],
+  doctorPortalOrganizations: [
+    { adminFirebaseProjectId: 1, adminFirebaseUid: 1 },
+    { verificationStatus: 1, createdAt: 1 },
+    { verificationStatus: 1, citySearch: 1 },
+  ],
+  doctorPortalDoctors: [
+    { organizationId: 1, fullName: 1 },
+    { organizationId: 1, departmentId: 1, isActive: 1 },
+    { emailSearch: 1, organizationId: 1 },
+    { assignedFirebaseProjectId: 1, assignedFirebaseUid: 1 },
+    { verificationStatus: 1, organizationId: 1 },
+  ],
+  doctorPortalDepartments: [
+    { organizationId: 1, nameSearch: 1 },
+    { organizationId: 1, isActive: 1 },
+  ],
+  doctorPortalAppointments: [
+    { doctorId: 1, slotKeys: 1 },
+    { organizationId: 1, appointmentDate: 1, status: 1 },
+    { doctorId: 1, appointmentDate: 1, status: 1 },
+    { patientFirebaseProjectId: 1, patientFirebaseUid: 1, createdAt: -1 },
+  ],
+  doctorPortalDailyCapacity: [
+    { doctorId: 1, appointmentDate: 1 },
+  ],
+  doctorPortalAuditLogs: [
+    { appointmentId: 1, createdAt: -1 },
+    { actorFirebaseProjectId: 1, actorFirebaseUid: 1, createdAt: -1 },
+  ],
 };
 
 async function ensureCollections(database, collectionNames = requiredCollections) {
@@ -112,6 +147,10 @@ async function ensureIndexes(database) {
 
   const indexOperations = Object.entries(requiredIndexes).flatMap(([collectionName, indexes]) => (
     indexes.map((keys) => database.collection(collectionName).createIndex(keys, {
+      ...(collectionName === 'doctorPortalDoctors'
+        && keys.assignedFirebaseProjectId && keys.assignedFirebaseUid
+        ? { sparse: true }
+        : {}),
       ...(collectionName === 'users' || collectionName === 'sellers'
         || (collectionName === 'sellerProfiles' && keys.firebaseUid)
         || (collectionName === 'communityOrganizers' && keys.firebaseUid)
@@ -120,6 +159,13 @@ async function ensureIndexes(database) {
         || (collectionName === 'communityRegistrations'
           && keys.eventId && keys.participantProjectId && keys.participantUid)
         || (collectionName === 'waterLogs' && keys.userId && keys.date)
+        || (collectionName === 'doctorPortalOrganizations'
+          && keys.adminFirebaseProjectId && keys.adminFirebaseUid)
+        || (collectionName === 'doctorPortalDepartments'
+          && keys.organizationId && keys.nameSearch)
+        || (collectionName === 'doctorPortalDoctors'
+          && keys.assignedFirebaseProjectId && keys.assignedFirebaseUid)
+        || (collectionName === 'doctorPortalAppointments' && keys.doctorId && keys.slotKeys)
         ? { unique: true }
         : {}),
     }))

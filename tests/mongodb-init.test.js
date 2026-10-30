@@ -59,6 +59,12 @@ test('MongoDB collection initialization creates required collections idempotentl
     'communityRegistrations',
     'communityModerationLogs',
     'doctorApplications',
+    'doctorPortalOrganizations',
+    'doctorPortalDoctors',
+    'doctorPortalDepartments',
+    'doctorPortalAppointments',
+    'doctorPortalDailyCapacity',
+    'doctorPortalAuditLogs',
   ]);
   assert.deepEqual([...database.collections].sort(), [
     'communityEvents',
@@ -66,6 +72,12 @@ test('MongoDB collection initialization creates required collections idempotentl
     'communityOrganizers',
     'communityRegistrations',
     'doctorApplications',
+    'doctorPortalAppointments',
+    'doctorPortalAuditLogs',
+    'doctorPortalDailyCapacity',
+    'doctorPortalDepartments',
+    'doctorPortalDoctors',
+    'doctorPortalOrganizations',
     'products',
     'sellerProfiles',
   ]);

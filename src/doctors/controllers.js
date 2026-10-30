@@ -249,13 +249,20 @@ export function createDoctorControllers({ getDb }) {
     if (!result.success) return invalid(res, result);
     const { specialty, city, page, limit } = result.data;
     const filter = { status: 'approved' };
+
     if (specialty) {
+      const term = normalizeSearchValue(specialty);
       filter.$or = [
-        { primarySpecialtySearch: normalizeSearchValue(specialty) },
-        { additionalSpecialtiesSearch: normalizeSearchValue(specialty) },
+        { primarySpecialtySearch: { $regex: term, $options: 'i' } },
+        { additionalSpecialtiesSearch: { $regex: term, $options: 'i' } },
+        { primarySpecialty: { $regex: term, $options: 'i' } },
       ];
     }
-    if (city) filter.citySearch = normalizeSearchValue(city);
+
+    if (city) {
+      const cityTerm = normalizeSearchValue(city.split(',')[0]);
+      filter.citySearch = { $regex: cityTerm, $options: 'i' };
+    }
 
     const collection = getDb().collection('doctorApplications');
     const [doctors, total] = await Promise.all([

@@ -30,6 +30,12 @@ function matches(document, query = {}) {
       && !(expected instanceof ObjectId) && !(expected instanceof Date)) {
       if ('$in' in expected) return expected.$in.includes(actual);
       if ('$exists' in expected) return (actual !== undefined) === expected.$exists;
+      if ('$regex' in expected) {
+        const expression = new RegExp(expected.$regex, expected.$options || '');
+        return Array.isArray(actual)
+          ? actual.some((value) => expression.test(String(value)))
+          : expression.test(String(actual || ''));
+      }
     }
     if (actual instanceof Date && expected instanceof Date) {
       return actual.getTime() === expected.getTime();

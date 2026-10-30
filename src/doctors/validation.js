@@ -46,6 +46,8 @@ const specialtySchema = z.string().trim().min(2).max(100);
 
 const profileFields = {
   fullName: z.string().trim().min(2).max(120),
+  gender: z.enum(['female', 'male', 'non_binary', 'prefer_not_to_say']).optional(),
+  dateOfBirth: z.string().date().optional(),
   profilePhotoUrl: photoReferenceSchema.optional(),
   phone: z.string().trim().min(7).max(40),
   medicalRegistrationNumber: z.string().trim().min(2).max(100),
@@ -190,7 +192,7 @@ export const doctorDirectoryQuerySchema = z.object({
   city: z.string().trim().min(1).max(100).optional(),
   page: pageNumber,
   limit: pageSize,
-}).strict();
+}).passthrough();
 
 export const adminDoctorQuerySchema = z.object({
   status: z.enum(doctorStatuses).default('pending_review'),
