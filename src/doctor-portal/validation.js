@@ -75,6 +75,11 @@ export const organizationSchema = z.object(organizationFields).strict();
 export const organizationUpdateSchema = z.object(
   Object.fromEntries(Object.entries(organizationFields).map(([key, schema]) => [key, schema.optional()])),
 ).strict().refine((value) => Object.keys(value).length > 0, 'At least one field is required.');
+export const organizationAdminQuerySchema = z.object({
+  status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict();
 
 const validateDoctorSchedule = (doctor, context) => {
   if (doctor.closingTime && doctor.openingTime && doctor.closingTime <= doctor.openingTime) {

@@ -249,6 +249,86 @@ test('separate portal API registers and verifies an organization and its doctors
   assert.equal(activated.body.doctor.isActive, true);
 });
 
+test('organization management lists each verification status, protects details, and records decisions', async () => {
+  const registered = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('North Hospital', 'Admin One'),
+  );
+  const organizationId = registered.body.organization.id;
+  records.get('doctorPortalOrganizations')[0].verificationDocuments = [
+    { name: 'Private registration certificate', url: 'https://documents.example/private.pdf' },
+  ];
+
+  assert.equal((await request(app).get('/api/doctor-portal/admin/organizations')).status, 401);
+  assert.equal((await request(app).get(`/api/doctor-portal/admin/organizations/${organizationId}`)).status, 401);
+  assert.equal((await auth('hospital')('get', '/api/doctor-portal/admin/organizations')).status, 403);
+  assert.equal((await auth('hospital')('get', `/api/doctor-portal/admin/organizations/${organizationId}`)).status, 403);
+  assert.equal(
+    (await auth('hospital')('patch', `/api/doctor-portal/admin/organizations/${organizationId}/review`, { status: 'approved' })).status,
+    403,
+  );
+
+  const invalidFilter = await auth('admin')('get', '/api/doctor-portal/admin/organizations?status=all');
+  assert.equal(invalidFilter.status, 400);
+  const pending = await auth('admin')('get', '/api/doctor-portal/admin/organizations?status=pending&page=1&limit=1');
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.total, 1);
+  assert.equal(pending.body.organizations[0].id, organizationId);
+  assert.equal(pending.body.organizations[0].verificationDocuments[0].name, 'Private registration certificate');
+  assert.equal('adminFirebaseUid' in pending.body.organizations[0], false);
+
+  const missingReason = await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/organizations/${organizationId}/review`,
+    { status: 'rejected', reviewNote: '   ' },
+  );
+  assert.equal(missingReason.status, 400);
+
+  const approved = await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/organizations/${organizationId}/review`,
+    { status: 'approved' },
+  );
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.organization.verificationStatus, 'approved');
+  assert.equal(approved.body.organization.reviewedBy, 'admin');
+  assert.ok(approved.body.organization.reviewedAt);
+
+  const approvedQueue = await auth('admin')('get', '/api/doctor-portal/admin/organizations?status=approved');
+  assert.equal(approvedQueue.body.total, 1);
+  assert.equal(approvedQueue.body.organizations[0].id, organizationId);
+  const detail = await auth('admin')('get', `/api/doctor-portal/admin/organizations/${organizationId}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.organization.email, 'hospital@example.test');
+  assert.equal(detail.body.organization.verificationDocuments[0].name, 'Private registration certificate');
+  assert.equal(detail.body.organization.reviewedBy, 'admin');
+  assert.equal(
+    (await auth('admin')('patch', `/api/doctor-portal/admin/organizations/${organizationId}/review`, { status: 'rejected', reviewNote: 'Duplicate' })).status,
+    404,
+  );
+
+  await auth('other-hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('South Clinic', 'Admin Two'),
+  );
+  const rejected = await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/organizations/${records.get('doctorPortalOrganizations')[1]._id}/review`,
+    { status: 'rejected', reviewNote: 'Registration could not be verified.' },
+  );
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.organization.reviewNote, 'Registration could not be verified.');
+  const rejectedQueue = await auth('admin')('get', '/api/doctor-portal/admin/organizations?status=rejected');
+  assert.equal(rejectedQueue.body.total, 1);
+  assert.equal(rejectedQueue.body.organizations[0].verificationStatus, 'rejected');
+
+  const legacyPendingQueue = await auth('admin')('get', '/api/doctor-portal/admin/organizations/pending');
+  assert.equal(legacyPendingQueue.status, 200);
+  assert.equal(legacyPendingQueue.body.organizations.length, 0);
+});
+
 test('portal booking reserves overlapping slots atomically and hospital appointment data stays isolated', async () => {
   const registered = await auth('hospital')('post', '/api/doctor-portal/organizations', organization('North Hospital', 'Admin One'));
   const orgId = registered.body.organization.id;
@@ -330,12 +410,18 @@ test('approved doctor invitations require a verified matching account and public
   const doctorId = created.body.doctor.id;
   await auth('admin')('patch', `/api/doctor-portal/admin/hospital-doctors/${doctorId}/review`, { status: 'approved' });
   await auth('hospital')('patch', `/api/doctor-portal/organizations/doctors/${doctorId}/active`, { isActive: true });
+  records.get('doctorPortalOrganizations')[0].verificationDocuments = [
+    { name: 'Private registration certificate', url: 'https://documents.example/private.pdf' },
+  ];
 
   const discovery = await request(app).get('/api/doctor-portal/doctors');
   assert.equal(discovery.status, 200);
   const publicDoctor = discovery.body.doctors[0];
   assert.equal(publicDoctor.id, doctorId);
   for (const privateField of ['email', 'phone', 'gender', 'dateOfBirth', 'medicalRegistrationNumber']) {
+    assert.equal(privateField in publicDoctor, false);
+  }
+  for (const privateField of ['email', 'phone', 'registrationNumber', 'adminFirebaseUid', 'verificationDocuments']) {
     assert.equal(privateField in publicDoctor, false);
   }
 

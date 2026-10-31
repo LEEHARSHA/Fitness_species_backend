@@ -11,6 +11,7 @@ import {
   hospitalDoctorQuerySchema,
   hospitalDoctorSchema,
   invitationAcceptSchema,
+  organizationAdminQuerySchema,
   organizationSchema,
   organizationUpdateSchema,
   publicDoctorQuerySchema,
@@ -635,6 +636,44 @@ export function createDoctorPortalControllers({ getDb }) {
     res.json({ success: true, organization: clean(organization) });
   });
 
+  const listAdminOrganizations = asyncRoute(async (req, res) => {
+    const parsed = organizationAdminQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const { status, page, limit } = parsed.data;
+    const organizations = collection('doctorPortalOrganizations');
+    const filter = { verificationStatus: status };
+    const [total, results] = await Promise.all([
+      organizations.countDocuments(filter),
+      organizations.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .toArray(),
+    ]);
+    res.json({
+      success: true,
+      organizations: results.map(clean),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  const getAdminOrganization = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.organizationId)) {
+      res.status(400).json({ success: false, message: 'Invalid organization ID.' });
+      return;
+    }
+    const organization = await collection('doctorPortalOrganizations').findOne({
+      _id: idOf(req.params.organizationId),
+    });
+    if (!organization) {
+      res.status(404).json({ success: false, message: 'Organization was not found.' });
+      return;
+    }
+    res.json({ success: true, organization: clean(organization) });
+  });
+
   const listPendingOrganizations = asyncRoute(async (_req, res) => {
     const organizations = await collection('doctorPortalOrganizations')
       .find({ verificationStatus: 'pending' }).sort({ createdAt: 1 }).limit(100).toArray();
@@ -1037,6 +1076,8 @@ export function createDoctorPortalControllers({ getDb }) {
     updateDepartment,
     deactivateDepartment,
     reviewOrganization,
+    listAdminOrganizations,
+    getAdminOrganization,
     listPendingOrganizations,
     listPendingHospitalDoctors,
     reviewHospitalDoctor,

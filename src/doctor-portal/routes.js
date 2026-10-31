@@ -41,6 +41,8 @@ export function createDoctorPortalRoutes(dependencies) {
   router.patch('/admin/organizations/:organizationId/review', authenticate, authorizeAdmin, controllers.reviewOrganization);
   router.patch('/admin/hospital-doctors/:doctorId/review', authenticate, authorizeAdmin, controllers.reviewHospitalDoctor);
   router.get('/admin/organizations/pending', authenticate, authorizeAdmin, controllers.listPendingOrganizations);
+  router.get('/admin/organizations', authenticate, authorizeAdmin, controllers.listAdminOrganizations);
+  router.get('/admin/organizations/:organizationId', authenticate, authorizeAdmin, controllers.getAdminOrganization);
   router.get('/admin/hospital-doctors/pending', authenticate, authorizeAdmin, controllers.listPendingHospitalDoctors);
   return router;
 }
