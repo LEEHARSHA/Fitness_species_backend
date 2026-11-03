@@ -155,6 +155,43 @@ class TestCollection {
     };
     return cursor;
   }
+
+  aggregate(pipeline) {
+    const status = pipeline[0]?.$match?.status;
+    const union = pipeline.find((stage) => stage.$unionWith)?.$unionWith;
+    const facet = pipeline.find((stage) => stage.$facet)?.$facet;
+    assert.ok(status, 'Admin queue must filter the individual application status.');
+    assert.equal(union?.coll, 'doctorPortalDoctors', 'Admin queue must include hospital doctor records.');
+    assert.equal(union.pipeline[0]?.$match?.verificationStatus, status);
+    assert.ok(facet, 'Admin queue must paginate and count the combined records.');
+
+    const annotate = (documents, source, statusField) => documents
+      .filter((document) => document[statusField] === status)
+      .map((document) => ({
+        ...document,
+        source,
+        doctorType: source,
+        status: document[statusField],
+        sortDate: document.submittedAt || document.createdAt,
+      }));
+    const documents = [
+      ...annotate(this.items(), 'individual', 'status'),
+      ...annotate(records.get(union.coll) || [], 'hospital', 'verificationStatus'),
+    ].sort((left, right) => (
+      new Date(left.sortDate || 0) - new Date(right.sortDate || 0)
+      || left._id.toString().localeCompare(right._id.toString())
+    ));
+    const offset = facet.data[0].$skip;
+    const limit = facet.data[1].$limit;
+    return {
+      async toArray() {
+        return [{
+          data: documents.slice(offset, offset + limit),
+          totalCount: documents.length ? [{ count: documents.length }] : [],
+        }];
+      },
+    };
+  }
 }
 
 const app = createApp({
@@ -247,6 +284,131 @@ test('separate portal API registers and verifies an organization and its doctors
   assert.equal(verified.status, 200);
   const activated = await auth('hospital')('patch', `/api/doctor-portal/organizations/doctors/${created.body.doctor.id}/active`, { isActive: true });
   assert.equal(activated.body.doctor.isActive, true);
+});
+
+test('unified admin doctor queue reviews organization doctors without duplicating records', async () => {
+  records.set('doctorApplications', []);
+  const registered = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('North Hospital', 'Admin One'),
+  );
+  const organizationId = registered.body.organization.id;
+  await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/organizations/${organizationId}/review`,
+    { status: 'approved' },
+  );
+
+  const created = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    doctor(),
+  );
+  const doctorId = created.body.doctor.id;
+  assert.equal(created.body.doctor.verificationStatus, 'pending_review');
+  assert.equal(created.body.doctor.isActive, false);
+  assert.equal(records.get('doctorPortalDoctors').length, 1);
+
+  records.get('doctorApplications').push({
+    _id: new ObjectId(),
+    fullName: 'Dr. Individual Applicant',
+    professionalEmail: 'individual@example.test',
+    status: 'pending_review',
+    submittedAt: new Date('2026-01-01T00:00:00Z'),
+    createdAt: new Date('2025-12-01T00:00:00Z'),
+  });
+
+  const pending = await auth('admin')('get', '/api/admin/doctors?status=pending_review');
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.total, 2);
+  const hospitalApplication = pending.body.doctors.find((item) => item.id === doctorId);
+  assert.ok(hospitalApplication);
+  assert.equal(hospitalApplication.source, 'hospital');
+  assert.equal(hospitalApplication.status, 'pending_review');
+  assert.equal(hospitalApplication.professionalEmail, 'doctor@example.test');
+  assert.equal(hospitalApplication.primarySpecialty, 'Cardiology');
+  assert.deepEqual(hospitalApplication.qualifications, ['MBBS']);
+  assert.equal(hospitalApplication.organizationName, 'North Hospital');
+  assert.equal(hospitalApplication.organizationVerificationStatus, 'approved');
+  assert.equal(hospitalApplication.accountStatus, 'inactive');
+  assert.equal(hospitalApplication.submittedAt, created.body.doctor.submittedAt);
+  assert.equal(pending.body.doctors.find((item) => item.fullName === 'Dr. Individual Applicant').source, 'individual');
+
+  const prematureActivation = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/organizations/doctors/${doctorId}/active`,
+    { isActive: true },
+  );
+  assert.equal(prematureActivation.status, 409);
+  assert.equal((await request(app).get('/api/doctor-portal/doctors')).body.total, 0);
+  const booking = {
+    doctorId,
+    patientName: 'Patient One',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  };
+  assert.equal(
+    (await auth('android')('post', '/api/doctor-portal/appointments/book', booking)).status,
+    404,
+  );
+  assert.equal(
+    (await auth('hospital')(
+      'patch',
+      `/api/admin/doctors/${doctorId}/review`,
+      { status: 'approved' },
+    )).status,
+    403,
+  );
+
+  const detail = await auth('admin')('get', `/api/admin/doctors/${doctorId}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.doctor.organization.name, 'North Hospital');
+  assert.equal(detail.body.doctor.organization.verificationStatus, 'approved');
+  assert.equal((await auth('hospital')('get', `/api/admin/doctors/${doctorId}`)).status, 403);
+
+  const approved = await auth('admin')('patch', `/api/admin/doctors/${doctorId}/review`, {
+    status: 'approved',
+  });
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.doctor.status, 'approved');
+  assert.equal(approved.body.doctor.accountStatus, 'inactive');
+  assert.equal(approved.body.doctor.isActive, false);
+  assert.equal(records.get('doctorPortalOrganizations')[0].verificationStatus, 'approved');
+  assert.equal((await request(app).get('/api/doctor-portal/doctors')).body.total, 0);
+  assert.equal(
+    (await auth('android')('post', '/api/doctor-portal/appointments/book', booking)).status,
+    404,
+  );
+
+  const hospitalListing = await auth('hospital')('get', '/api/doctor-portal/organizations/doctors');
+  assert.equal(hospitalListing.body.doctors[0].verificationStatus, 'approved');
+  assert.equal((await request(app).get('/api/doctor-portal/doctors')).body.total, 0);
+
+  const activated = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/organizations/doctors/${doctorId}/active`,
+    { isActive: true },
+  );
+  assert.equal(activated.status, 200);
+  assert.equal((await request(app).get('/api/doctor-portal/doctors')).body.total, 1);
+
+  const rejectedDoctor = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    { ...doctor(), email: 'rejected@example.test', medicalRegistrationNumber: 'MCI-PORTAL-2' },
+  );
+  const rejected = await auth('admin')(
+    'patch',
+    `/api/admin/doctors/${rejectedDoctor.body.doctor.id}/review`,
+    { status: 'rejected', reviewNote: 'Registration could not be verified.' },
+  );
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.doctor.status, 'rejected');
+  assert.equal(rejected.body.doctor.accountStatus, 'inactive');
+  assert.equal(rejected.body.doctor.isActive, false);
 });
 
 test('organization management lists each verification status, protects details, and records decisions', async () => {
@@ -343,7 +505,7 @@ test('portal booking reserves overlapping slots atomically and hospital appointm
     patientName: 'Patient One',
     patientGender: 'female',
     patientAgeAtBooking: 34,
-    appointmentDate: '2026-11-02',
+    appointmentDate: '2027-11-01',
     appointmentTime: '09:00',
     appointmentType: 'in_person',
     patientConsent: true,

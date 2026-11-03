@@ -435,6 +435,7 @@ export function createDoctorPortalControllers({ getDb }) {
       emailSearch: parsed.data.email.toLocaleLowerCase('en-US'),
       verificationStatus: 'pending_review',
       isActive: false,
+      submittedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -501,6 +502,19 @@ export function createDoctorPortalControllers({ getDb }) {
     if (parsed.data.isActive && doctor.verificationStatus !== 'approved') {
       res.status(409).json({ success: false, message: 'Only platform-approved doctors can be activated.' });
       return;
+    }
+    if (parsed.data.isActive) {
+      const approvedOrganization = await collection('doctorPortalOrganizations').findOne({
+        _id: doctor.organizationId,
+        verificationStatus: 'approved',
+      });
+      if (!approvedOrganization) {
+        res.status(409).json({
+          success: false,
+          message: 'The organization must be platform-approved before its doctors can be activated.',
+        });
+        return;
+      }
     }
     const updated = await collection('doctorPortalDoctors').findOneAndUpdate(
       { _id: doctor._id, organizationId: organization._id },

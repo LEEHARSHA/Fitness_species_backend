@@ -53,9 +53,34 @@ function privateDoctorResponse(doctor) {
 
 function adminDoctorResponse(doctor) {
   if (!doctor) return null;
+  const isHospitalDoctor = doctor.source === 'hospital' || doctor.doctorType === 'hospital';
+  const organization = doctor.organization;
+  const normalized = isHospitalDoctor
+    ? {
+      ...doctor,
+      professionalEmail: doctor.professionalEmail || doctor.email || null,
+      primarySpecialty: doctor.primarySpecialty || doctor.specialization,
+      additionalSpecialties: doctor.additionalSpecialties || doctor.additionalSpecializations || [],
+      clinicName: doctor.clinicName || organization?.name || null,
+      clinicAddress: doctor.clinicAddress || organization?.address || null,
+      city: doctor.city || organization?.city || null,
+      state: doctor.state || organization?.state || null,
+      organizationName: organization?.name || null,
+      organizationVerificationStatus: organization?.verificationStatus || 'unknown',
+      accountStatus: doctor.isActive === true
+        && doctor.verificationStatus === 'approved'
+        && organization?.verificationStatus === 'approved'
+        ? 'active'
+        : 'inactive',
+      submittedAt: doctor.submittedAt || doctor.createdAt || null,
+    }
+    : {
+      ...doctor,
+      accountStatus: doctor.status === 'approved' ? 'active' : 'inactive',
+    };
   return {
-    ...doctor,
-    id: doctor._id.toString(),
+    ...normalized,
+    id: normalized._id.toString(),
     _id: undefined,
   };
 }
@@ -303,13 +328,47 @@ export function createDoctorControllers({ getDb }) {
     const result = adminDoctorQuerySchema.safeParse(req.query);
     if (!result.success) return invalid(res, result);
     const { status, page, limit } = result.data;
-    const filter = { status };
+
+    const pipeline = [
+      { $match: { status } },
+      { $addFields: { source: 'individual', doctorType: 'individual', sortDate: { $ifNull: ['$submittedAt', '$createdAt'] } } },
+      { $unionWith: {
+          coll: 'doctorPortalDoctors',
+          pipeline: [
+            { $match: { verificationStatus: status } },
+            { $addFields: { source: 'hospital', doctorType: 'hospital', status: '$verificationStatus', sortDate: { $ifNull: ['$submittedAt', '$createdAt'] } } }
+          ]
+      } },
+      { $sort: { sortDate: 1, _id: 1 } },
+      { $facet: {
+          data: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+          totalCount: [{ $count: 'count' }]
+      }}
+    ];
+
     const collection = getDb().collection('doctorApplications');
-    const [doctors, total] = await Promise.all([
-      collection.find(filter).sort({ submittedAt: 1 })
-        .skip((page - 1) * limit).limit(limit).toArray(),
-      collection.countDocuments(filter),
-    ]);
+    const [aggregateResult] = await collection.aggregate(pipeline).toArray();
+    const doctors = aggregateResult.data;
+    const total = aggregateResult.totalCount[0]?.count || 0;
+
+    if (doctors.some((doctor) => doctor.organizationId)) {
+      const orgIds = [...new Set(
+        doctors
+          .filter((doctor) => doctor.organizationId)
+          .map((doctor) => doctor.organizationId.toString()),
+      )].map((id) => new ObjectId(id));
+      const organizations = await getDb().collection('doctorPortalOrganizations')
+        .find({ _id: { $in: orgIds } }).toArray();
+      const organizationById = new Map(
+        organizations.map((organization) => [organization._id.toString(), organization]),
+      );
+      doctors.forEach((doctor) => {
+        if (doctor.organizationId) {
+          doctor.organization = organizationById.get(doctor.organizationId.toString()) || null;
+        }
+      });
+    }
+
     res.json({
       success: true,
       count: doctors.length,
@@ -325,9 +384,25 @@ export function createDoctorControllers({ getDb }) {
       res.status(400).json({ success: false, message: 'Invalid doctor ID.' });
       return;
     }
-    const doctor = await getDb().collection('doctorApplications').findOne({
-      _id: new ObjectId(req.params.id),
-    });
+    const id = new ObjectId(req.params.id);
+    let doctor = await getDb().collection('doctorApplications').findOne({ _id: id });
+
+    if (doctor) {
+      doctor.source = 'individual';
+      doctor.doctorType = 'individual';
+    } else {
+      doctor = await getDb().collection('doctorPortalDoctors').findOne({ _id: id });
+      if (doctor) {
+        doctor.source = 'hospital';
+        doctor.doctorType = 'hospital';
+        doctor.status = doctor.verificationStatus;
+        if (doctor.organizationId) {
+          doctor.organization = await getDb().collection('doctorPortalOrganizations')
+            .findOne({ _id: doctor.organizationId });
+        }
+      }
+    }
+
     if (!doctor) {
       res.status(404).json({ success: false, message: 'Doctor application not found.' });
       return;
@@ -345,12 +420,22 @@ export function createDoctorControllers({ getDb }) {
 
     const { status, reviewNote } = result.data;
     const id = new ObjectId(req.params.id);
-    const collection = getDb().collection('doctorApplications');
-    const current = await collection.findOne({ _id: id });
+
+    let collectionName = 'doctorApplications';
+    let statusField = 'status';
+    let current = await getDb().collection('doctorApplications').findOne({ _id: id });
+
     if (!current) {
-      res.status(404).json({ success: false, message: 'Doctor application not found.' });
-      return;
+      current = await getDb().collection('doctorPortalDoctors').findOne({ _id: id });
+      if (!current) {
+        res.status(404).json({ success: false, message: 'Doctor application not found.' });
+        return;
+      }
+      collectionName = 'doctorPortalDoctors';
+      statusField = 'verificationStatus';
+      current.status = current.verificationStatus;
     }
+
     if (
       current.firebaseProjectId === req.user.firebaseProjectId
       && current.firebaseUid === req.user.uid
@@ -377,18 +462,23 @@ export function createDoctorControllers({ getDb }) {
     }
 
     const now = new Date();
-    const doctor = await collection.findOneAndUpdate(
-      { _id: id, status: { $in: allowedFrom } },
+    const updateSet = {
+      [statusField]: status,
+      reviewNote: status === 'approved' ? null : reviewNote,
+      reviewedBy: req.user.uid,
+      reviewedAt: now,
+      updatedAt: now,
+      approvedAt: status === 'approved' ? now : null,
+      suspendedAt: status === 'suspended' ? now : null,
+      ...(collectionName === 'doctorPortalDoctors' && status !== 'approved'
+        ? { isActive: false }
+        : {}),
+    };
+
+    const doctor = await getDb().collection(collectionName).findOneAndUpdate(
+      { _id: id, [statusField]: { $in: allowedFrom } },
       {
-        $set: {
-          status,
-          reviewNote: status === 'approved' ? null : reviewNote,
-          reviewedBy: req.user.uid,
-          reviewedAt: now,
-          updatedAt: now,
-          approvedAt: status === 'approved' ? now : null,
-          suspendedAt: status === 'suspended' ? now : null,
-        },
+        $set: updateSet,
         $push: {
           reviewHistory: {
             decision: status,
@@ -407,6 +497,20 @@ export function createDoctorControllers({ getDb }) {
       });
       return;
     }
+
+    if (collectionName === 'doctorPortalDoctors') {
+      doctor.source = 'hospital';
+      doctor.doctorType = 'hospital';
+      doctor.status = doctor.verificationStatus;
+      if (doctor.organizationId) {
+        doctor.organization = await getDb().collection('doctorPortalOrganizations')
+          .findOne({ _id: doctor.organizationId });
+      }
+    } else {
+      doctor.source = 'individual';
+      doctor.doctorType = 'individual';
+    }
+
     res.json({ success: true, doctor: adminDoctorResponse(doctor) });
   });
 

@@ -129,6 +129,43 @@ class Collection {
     };
     return cursor;
   }
+
+  aggregate(pipeline) {
+    const status = pipeline[0]?.$match?.status;
+    const union = pipeline.find((stage) => stage.$unionWith)?.$unionWith;
+    const facet = pipeline.find((stage) => stage.$facet)?.$facet;
+    assert.ok(status, 'Admin queue must filter the individual application status.');
+    assert.equal(union?.coll, 'doctorPortalDoctors', 'Admin queue must include hospital doctor records.');
+    assert.equal(union.pipeline[0]?.$match?.verificationStatus, status);
+    assert.ok(facet, 'Admin queue must paginate and count the combined records.');
+
+    const annotate = (documents, source, statusField) => documents
+      .filter((document) => document[statusField] === status)
+      .map((document) => ({
+        ...document,
+        source,
+        doctorType: source,
+        status: document[statusField],
+        sortDate: document.submittedAt || document.createdAt,
+      }));
+    const documents = [
+      ...annotate(this.items(), 'individual', 'status'),
+      ...annotate(records.get(union.coll) || [], 'hospital', 'verificationStatus'),
+    ].sort((left, right) => (
+      new Date(left.sortDate || 0) - new Date(right.sortDate || 0)
+      || left._id.toString().localeCompare(right._id.toString())
+    ));
+    const offset = facet.data[0].$skip;
+    const limit = facet.data[1].$limit;
+    return {
+      async toArray() {
+        return [{
+          data: documents.slice(offset, offset + limit),
+          totalCount: documents.length ? [{ count: documents.length }] : [],
+        }];
+      },
+    };
+  }
 }
 
 const claims = {
