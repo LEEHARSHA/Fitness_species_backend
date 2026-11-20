@@ -28,7 +28,13 @@ function matches(document, query = {}) {
     }
     if (expected && typeof expected === 'object'
       && !(expected instanceof ObjectId) && !(expected instanceof Date)) {
-      if ('$in' in expected) return expected.$in.includes(actual);
+      if ('$in' in expected) {
+        return expected.$in.some((value) => (
+          actual instanceof ObjectId || value instanceof ObjectId
+            ? String(actual) === String(value)
+            : actual === value
+        ));
+      }
       if ('$exists' in expected) return (actual !== undefined) === expected.$exists;
       if ('$regex' in expected) {
         const expression = new RegExp(expected.$regex, expected.$options || '');
@@ -275,8 +281,8 @@ function profile(overrides = {}) {
   };
 }
 
-async function createSubmittedDoctor(app, token = 'doctor') {
-  const draft = await authorized(app, token).put('/api/doctors/me', profile());
+async function createSubmittedDoctor(app, token = 'doctor', overrides = {}) {
+  const draft = await authorized(app, token).put('/api/doctors/me', profile(overrides));
   assert.equal(draft.status, 200);
   const submitted = await authorized(app, token).post('/api/doctors/me/submit');
   assert.equal(submitted.status, 200);
@@ -458,4 +464,101 @@ test('public directory filters approved doctors and excludes protected profile f
   const detail = await request(app).get(`/api/doctors/${pending.id}`);
   assert.equal(detail.status, 200);
   assert.equal('medicalRegistrationNumber' in detail.body.doctor, false);
+});
+
+test('public directory combines eligible individual and hospital doctors without exposing private fields', async () => {
+  const app = makeApp();
+  const individual = await createSubmittedDoctor(app, 'doctor', {
+    city: 'Visakhapatnam',
+    state: 'Andhra Pradesh',
+  });
+  await authorized(app, 'admin')
+    .patch(`/api/admin/doctors/${individual.id}/review`, { status: 'approved' });
+
+  const approvedOrganization = {
+    _id: new ObjectId(),
+    name: 'North Hospital',
+    verificationStatus: 'approved',
+    address: '10 Health Avenue',
+    city: 'Visakhapatnam',
+    citySearch: 'visakhapatnam',
+    state: 'Andhra Pradesh',
+  };
+  const pendingOrganization = {
+    ...approvedOrganization,
+    _id: new ObjectId(),
+    name: 'Pending Hospital',
+    verificationStatus: 'pending',
+  };
+  records.set('doctorPortalOrganizations', [approvedOrganization, pendingOrganization]);
+
+  const hospitalDoctor = (overrides = {}) => ({
+    _id: new ObjectId(),
+    organizationId: approvedOrganization._id,
+    fullName: 'Dr. Hospital Doctor',
+    email: 'private@example.test',
+    phone: '+91 9876543210',
+    medicalRegistrationNumber: 'PRIVATE-123',
+    specialization: 'Cardiology',
+    specializationSearch: 'cardiology',
+    qualifications: ['MBBS', 'MD Cardiology'],
+    yearsExperience: 12,
+    consultationFee: 800,
+    workingDays: ['monday', 'wednesday', 'friday'],
+    verificationStatus: 'approved',
+    isActive: true,
+    ...overrides,
+  });
+  const eligibleHospitalDoctor = hospitalDoctor();
+  const inactiveHospitalDoctor = hospitalDoctor({ isActive: false });
+  const pendingHospitalDoctor = hospitalDoctor({ verificationStatus: 'pending_review' });
+  const rejectedHospitalDoctor = hospitalDoctor({ verificationStatus: 'rejected' });
+  const unapprovedOrganizationDoctor = hospitalDoctor({
+    organizationId: pendingOrganization._id,
+  });
+  records.set('doctorPortalDoctors', [
+    eligibleHospitalDoctor,
+    inactiveHospitalDoctor,
+    pendingHospitalDoctor,
+    rejectedHospitalDoctor,
+    unapprovedOrganizationDoctor,
+  ]);
+
+  const directory = await request(app)
+    .get('/api/doctors?specialty=cardiology&city=visakhapatnam');
+  assert.equal(directory.status, 200);
+  assert.equal(directory.body.total, 2);
+  assert.deepEqual(
+    directory.body.doctors.map(({ id }) => id).sort(),
+    [individual.id, eligibleHospitalDoctor._id.toString()].sort(),
+  );
+
+  const hospitalResult = directory.body.doctors.find(
+    ({ id }) => id === eligibleHospitalDoctor._id.toString(),
+  );
+  assert.equal(hospitalResult.primarySpecialty, 'Cardiology');
+  assert.equal(hospitalResult.organizationId, approvedOrganization._id.toString());
+  assert.equal(hospitalResult.organizationName, 'North Hospital');
+  assert.equal(hospitalResult.clinicName, 'North Hospital');
+  assert.equal(hospitalResult.clinicAddress, '10 Health Avenue');
+  assert.equal(hospitalResult.city, 'Visakhapatnam');
+  assert.equal(hospitalResult.state, 'Andhra Pradesh');
+  for (const key of ['email', 'phone', 'medicalRegistrationNumber', 'organizationEmail']) {
+    assert.equal(key in hospitalResult, false, `Public response must omit ${key}.`);
+  }
+
+  const detail = await request(app)
+    .get(`/api/doctors/${eligibleHospitalDoctor._id.toString()}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.doctor.organizationId, approvedOrganization._id.toString());
+  assert.equal(detail.body.doctor.organizationName, 'North Hospital');
+
+  assert.equal(
+    (await request(app).get('/api/doctors?specialty=dermatology&city=visakhapatnam')).body.total,
+    0,
+  );
+  assert.equal(
+    (await request(app).get('/api/doctors?specialty=cardiology&city=vis')).body.total,
+    2,
+  );
 });
