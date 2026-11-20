@@ -4,6 +4,7 @@ import {
   appointmentQuerySchema,
   appointmentRescheduleSchema,
   appointmentStatusSchema,
+  adminOrganizationDoctorsQuerySchema,
   departmentSchema,
   departmentUpdateSchema,
   doctorUpdateSchema,
@@ -688,6 +689,130 @@ export function createDoctorPortalControllers({ getDb }) {
     res.json({ success: true, organization: clean(organization) });
   });
 
+  const listAdminOrganizationDoctors = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.organizationId)) {
+      res.status(400).json({ success: false, message: 'Invalid organization ID.' });
+      return;
+    }
+    const parsed = adminOrganizationDoctorsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const organizationId = idOf(req.params.organizationId);
+    const organization = await collection('doctorPortalOrganizations').findOne({ _id: organizationId });
+    if (!organization) {
+      res.status(404).json({ success: false, message: 'Organization was not found.' });
+      return;
+    }
+
+    const { status, search = '', page, limit } = parsed.data;
+    const filter = { organizationId };
+    if (status !== 'all') filter.verificationStatus = status;
+    if (search) {
+      const term = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = ['fullName', 'email', 'specialization', 'medicalRegistrationNumber']
+        .map((field) => ({ [field]: { $regex: term, $options: 'i' } }));
+    }
+
+    const doctorsCollection = collection('doctorPortalDoctors');
+    const [doctors, total] = await Promise.all([
+      doctorsCollection.find(filter).sort({ createdAt: -1, _id: 1 })
+        .skip((page - 1) * limit).limit(limit).toArray(),
+      doctorsCollection.countDocuments(filter),
+    ]);
+    const departmentIds = [...new Set(
+      doctors.map(({ departmentId }) => departmentId?.toString()).filter(Boolean),
+    )].map(idOf);
+    const departments = departmentIds.length
+      ? await collection('doctorPortalDepartments').find({
+        _id: { $in: departmentIds },
+        organizationId,
+      }).toArray()
+      : [];
+    const departmentById = new Map(departments.map((department) => [department._id.toString(), department.name]));
+
+    res.json({
+      success: true,
+      doctors: doctors.map((doctor) => ({
+        ...clean(doctor),
+        departmentName: doctor.departmentId
+          ? departmentById.get(doctor.departmentId.toString()) || null
+          : null,
+      })),
+      total,
+      page,
+      limit,
+    });
+  });
+
+  const getAdminOrganizationDoctor = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.organizationId) || !hasId(req.params.doctorId)) {
+      res.status(400).json({ success: false, message: 'Invalid organization or doctor ID.' });
+      return;
+    }
+    const organizationId = idOf(req.params.organizationId);
+    const organization = await collection('doctorPortalOrganizations').findOne({ _id: organizationId });
+    if (!organization) {
+      res.status(404).json({ success: false, message: 'Organization was not found.' });
+      return;
+    }
+    const doctor = await collection('doctorPortalDoctors').findOne({
+      _id: idOf(req.params.doctorId),
+      organizationId,
+    });
+    if (!doctor) {
+      res.status(404).json({ success: false, message: 'Doctor was not found in this organization.' });
+      return;
+    }
+    const department = doctor.departmentId
+      ? await collection('doctorPortalDepartments').findOne({
+        _id: doctor.departmentId,
+        organizationId,
+      })
+      : null;
+    res.json({
+      success: true,
+      doctor: {
+        ...clean(doctor),
+        departmentName: department?.name || null,
+      },
+    });
+  });
+
+  const reviewAdminOrganizationDoctor = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.organizationId) || !hasId(req.params.doctorId)) {
+      res.status(400).json({ success: false, message: 'Invalid organization or doctor ID.' });
+      return;
+    }
+    const parsed = verificationSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    const organizationId = idOf(req.params.organizationId);
+    const organization = await collection('doctorPortalOrganizations').findOne({ _id: organizationId });
+    if (!organization) {
+      res.status(404).json({ success: false, message: 'Organization was not found.' });
+      return;
+    }
+    const now = new Date();
+    const doctor = await collection('doctorPortalDoctors').findOneAndUpdate(
+      {
+        _id: idOf(req.params.doctorId),
+        organizationId,
+        verificationStatus: 'pending_review',
+      },
+      { $set: {
+        verificationStatus: parsed.data.status,
+        reviewNote: parsed.data.reviewNote || null,
+        reviewedBy: req.user.uid,
+        reviewedAt: now,
+        updatedAt: now,
+      } },
+      { returnDocument: 'after' },
+    );
+    if (!doctor) {
+      res.status(404).json({ success: false, message: 'Pending doctor was not found in this organization.' });
+      return;
+    }
+    res.json({ success: true, doctor: clean(doctor) });
+  });
+
   const listPendingOrganizations = asyncRoute(async (_req, res) => {
     const organizations = await collection('doctorPortalOrganizations')
       .find({ verificationStatus: 'pending' }).sort({ createdAt: 1 }).limit(100).toArray();
@@ -1092,6 +1217,9 @@ export function createDoctorPortalControllers({ getDb }) {
     reviewOrganization,
     listAdminOrganizations,
     getAdminOrganization,
+    listAdminOrganizationDoctors,
+    getAdminOrganizationDoctor,
+    reviewAdminOrganizationDoctor,
     listPendingOrganizations,
     listPendingHospitalDoctors,
     reviewHospitalDoctor,

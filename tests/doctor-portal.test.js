@@ -411,6 +411,211 @@ test('unified admin doctor queue reviews organization doctors without duplicatin
   assert.equal(rejected.body.doctor.isActive, false);
 });
 
+test('organization doctor reviews are authorized, searchable, and scoped to the selected organization', async () => {
+  const firstOrganization = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('North Hospital', 'Admin One'),
+  );
+  const secondOrganization = await auth('other-hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('South Clinic', 'Admin Two'),
+  );
+  const firstOrganizationId = firstOrganization.body.organization.id;
+  const secondOrganizationId = secondOrganization.body.organization.id;
+  await auth('admin')('patch', `/api/doctor-portal/admin/organizations/${firstOrganizationId}/review`, { status: 'approved' });
+  await auth('admin')('patch', `/api/doctor-portal/admin/organizations/${secondOrganizationId}/review`, { status: 'approved' });
+  const department = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/departments',
+    { name: 'Cardiology' },
+  );
+
+  const firstDoctor = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    { ...doctor(), departmentId: department.body.department.id },
+  );
+  const secondDoctor = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    {
+      ...doctor(),
+      fullName: 'Dr. Approved Hospital Doctor',
+      email: 'approved@example.test',
+      specialization: 'Neurology',
+      medicalRegistrationNumber: 'MCI-PORTAL-2',
+    },
+  );
+  const otherOrganizationDoctor = await auth('other-hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    {
+      ...doctor(),
+      fullName: 'Dr. Other Organization Doctor',
+      email: 'other-doctor@example.test',
+      medicalRegistrationNumber: 'MCI-PORTAL-3',
+    },
+  );
+  const doctorsPath = `/api/doctor-portal/admin/organizations/${firstOrganizationId}/doctors`;
+
+  assert.equal((await request(app).get(doctorsPath)).status, 401);
+  assert.equal((await auth('hospital')('get', doctorsPath)).status, 403);
+  const filtered = await auth('admin')('get', `${doctorsPath}?status=pending_review&search=MCI-PORTAL-1`);
+  assert.equal(filtered.status, 200);
+  assert.equal(filtered.body.total, 1);
+  assert.equal(filtered.body.doctors[0].id, firstDoctor.body.doctor.id);
+  assert.equal(filtered.body.doctors[0].organizationId, firstOrganizationId);
+  assert.equal(filtered.body.doctors[0].departmentName, 'Cardiology');
+  const doctorDetails = await auth('admin')(
+    'get',
+    `${doctorsPath}/${firstDoctor.body.doctor.id}`,
+  );
+  assert.equal(doctorDetails.status, 200);
+  assert.equal(doctorDetails.body.doctor.departmentName, 'Cardiology');
+  assert.equal(
+    (await auth('admin')('get', `${doctorsPath}?status=all&search=approved%40example.test`)).body.total,
+    1,
+  );
+  assert.equal(
+    (await auth('admin')('get', `${doctorsPath}?status=all&search=Neurology`)).body.total,
+    1,
+  );
+  assert.equal(
+    (await auth('admin')('get', `${doctorsPath}?status=all&search=Approved+Hospital+Doctor`)).body.total,
+    1,
+  );
+
+  const allFirstOrganizationDoctors = await auth('admin')('get', `${doctorsPath}?status=all`);
+  assert.equal(allFirstOrganizationDoctors.body.total, 2);
+  const secondPage = await auth('admin')(
+    'get',
+    `${doctorsPath}?status=all&page=2&limit=1`,
+  );
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.total, 2);
+  assert.equal(secondPage.body.page, 2);
+  assert.equal(secondPage.body.limit, 1);
+  assert.equal(secondPage.body.doctors.length, 1);
+  assert.equal(
+    allFirstOrganizationDoctors.body.doctors.some(({ id }) => id === otherOrganizationDoctor.body.doctor.id),
+    false,
+  );
+  const secondOrganizationDoctors = await auth('admin')(
+    'get',
+    `/api/doctor-portal/admin/organizations/${secondOrganizationId}/doctors?status=all`,
+  );
+  assert.equal(secondOrganizationDoctors.body.total, 1);
+  assert.equal(secondOrganizationDoctors.body.doctors[0].id, otherOrganizationDoctor.body.doctor.id);
+  assert.equal(
+    (await auth('admin')('get', `${doctorsPath}/${otherOrganizationDoctor.body.doctor.id}`)).status,
+    404,
+  );
+
+  const wrongOrganizationReview = await auth('admin')(
+    'patch',
+    `${doctorsPath}/${otherOrganizationDoctor.body.doctor.id}/review`,
+    { status: 'approved' },
+  );
+  assert.equal(wrongOrganizationReview.status, 404);
+  assert.equal(
+    records.get('doctorPortalDoctors').find(({ _id }) => String(_id) === firstDoctor.body.doctor.id).verificationStatus,
+    'pending_review',
+  );
+
+  const missingReason = await auth('admin')(
+    'patch',
+    `${doctorsPath}/${firstDoctor.body.doctor.id}/review`,
+    { status: 'rejected', reviewNote: '  ' },
+  );
+  assert.equal(missingReason.status, 400);
+  const rejected = await auth('admin')(
+    'patch',
+    `${doctorsPath}/${firstDoctor.body.doctor.id}/review`,
+    { status: 'rejected', reviewNote: 'Registration could not be verified.' },
+  );
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.doctor.verificationStatus, 'rejected');
+  assert.equal(rejected.body.doctor.reviewNote, 'Registration could not be verified.');
+  assert.equal(rejected.body.doctor.isActive, false);
+
+  const unauthorizedApproval = await auth('patient')(
+    'patch',
+    `${doctorsPath}/${secondDoctor.body.doctor.id}/review`,
+    { status: 'approved' },
+  );
+  assert.equal(unauthorizedApproval.status, 403);
+  const approved = await auth('admin')(
+    'patch',
+    `${doctorsPath}/${secondDoctor.body.doctor.id}/review`,
+    { status: 'approved' },
+  );
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.doctor.verificationStatus, 'approved');
+  assert.equal(approved.body.doctor.isActive, false);
+
+  const approvedFilter = await auth('admin')('get', `${doctorsPath}?status=approved`);
+  assert.equal(approvedFilter.body.total, 1);
+  assert.equal(approvedFilter.body.doctors[0].id, secondDoctor.body.doctor.id);
+  const rejectedFilter = await auth('admin')('get', `${doctorsPath}?status=rejected`);
+  assert.equal(rejectedFilter.body.total, 1);
+  assert.equal(rejectedFilter.body.doctors[0].id, firstDoctor.body.doctor.id);
+});
+
+test('admin organization doctor listing handles empty, invalid, and populated organizations', async () => {
+  const registered = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization('North Hospital', 'Admin One'),
+  );
+  const organizationId = registered.body.organization.id;
+  const doctorsPath = `/api/doctor-portal/admin/organizations/${organizationId}/doctors`;
+  await auth('admin')('patch', `/api/doctor-portal/admin/organizations/${organizationId}/review`, { status: 'approved' });
+
+  assert.equal((await request(app).get(doctorsPath)).status, 401);
+  assert.equal((await auth('hospital')('get', doctorsPath)).status, 403);
+  assert.equal(
+    (await auth('admin')('get', '/api/doctor-portal/admin/organizations/not-an-object-id/doctors')).status,
+    400,
+  );
+  assert.equal(
+    (await auth('admin')('get', '/api/doctor-portal/admin/organizations/000000000000000000000001/doctors')).status,
+    404,
+  );
+
+  const emptyList = await auth('admin')('get', doctorsPath);
+  assert.equal(emptyList.status, 200);
+  assert.deepEqual(emptyList.body.doctors, []);
+  assert.equal(emptyList.body.total, 0);
+
+  const created = await auth('hospital')('post', '/api/doctor-portal/organizations/doctors', doctor());
+  const doctorId = created.body.doctor.id;
+  const pendingList = await auth('admin')('get', doctorsPath);
+  assert.equal(pendingList.body.total, 1);
+  assert.equal(pendingList.body.doctors[0].id, doctorId);
+  assert.equal(pendingList.body.doctors[0].verificationStatus, 'pending_review');
+  assert.equal(pendingList.body.doctors[0].isActive, false);
+
+  const approved = await auth('admin')(
+    'patch',
+    `${doctorsPath}/${doctorId}/review`,
+    { status: 'approved' },
+  );
+  assert.equal(approved.status, 200);
+  const activated = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/organizations/doctors/${doctorId}/active`,
+    { isActive: true },
+  );
+  assert.equal(activated.status, 200);
+
+  const activeList = await auth('admin')('get', doctorsPath);
+  assert.equal(activeList.body.doctors[0].verificationStatus, 'approved');
+  assert.equal(activeList.body.doctors[0].isActive, true);
+  assert.equal(records.get('doctorPortalDoctors').length, 1);
+});
+
 test('organization management lists each verification status, protects details, and records decisions', async () => {
   const registered = await auth('hospital')(
     'post',

@@ -127,6 +127,12 @@ export const hospitalDoctorQuerySchema = z.object({
   specialization: text(2, 100).optional(),
   departmentId: objectId.optional(),
 }).strict();
+export const adminOrganizationDoctorsQuerySchema = z.object({
+  status: z.enum(['all', 'pending_review', 'approved', 'rejected']).default('all'),
+  search: z.string().trim().max(120).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict();
 export const doctorActiveSchema = z.object({ isActive: z.boolean() }).strict();
 
 export const appointmentBookingSchema = z.object({

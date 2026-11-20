@@ -53,10 +53,51 @@ function privateDoctorResponse(doctor) {
 
 function adminDoctorResponse(doctor) {
   if (!doctor) return null;
+  const { _id, sortDate: _sortDate, ...profile } = doctor;
   return {
-    ...doctor,
-    id: doctor._id.toString(),
-    _id: undefined,
+    ...profile,
+    id: _id.toString(),
+    source: 'individual',
+    doctorType: 'individual',
+  };
+}
+
+function adminHospitalDoctorResponse(doctor, organization) {
+  if (!doctor) return null;
+  const {
+    _id,
+    firebaseProjectId: _firebaseProjectId,
+    firebaseUid: _firebaseUid,
+    assignedFirebaseProjectId: _assignedFirebaseProjectId,
+    assignedFirebaseUid: _assignedFirebaseUid,
+    sortDate: _sortDate,
+    ...profile
+  } = doctor;
+  return {
+    ...profile,
+    id: _id.toString(),
+    organizationId: doctor.organizationId?.toString() || null,
+    source: 'hospital',
+    doctorType: 'hospital',
+    status: doctor.verificationStatus,
+    professionalEmail: doctor.email || null,
+    primarySpecialty: doctor.specialization || null,
+    additionalSpecialties: doctor.additionalSpecializations || [],
+    clinicName: organization?.name || null,
+    clinicAddress: organization?.address || null,
+    city: organization?.city || null,
+    state: organization?.state || null,
+    organizationName: organization?.name || null,
+    organizationVerificationStatus: organization?.verificationStatus || null,
+    accountStatus: doctor.isActive === true ? 'active' : 'inactive',
+    submittedAt: doctor.submittedAt || doctor.createdAt || null,
+    organization: organization
+      ? {
+        id: organization._id.toString(),
+        name: organization.name,
+        verificationStatus: organization.verificationStatus,
+      }
+      : null,
   };
 }
 
@@ -398,20 +439,70 @@ export function createDoctorControllers({ getDb }) {
     const result = adminDoctorQuerySchema.safeParse(req.query);
     if (!result.success) return invalid(res, result);
     const { status, page, limit } = result.data;
-    const filter = { status };
     const collection = getDb().collection('doctorApplications');
-    const [doctors, total] = await Promise.all([
-      collection.find(filter).sort({ submittedAt: 1 })
-        .skip((page - 1) * limit).limit(limit).toArray(),
-      collection.countDocuments(filter),
-    ]);
+    const [resultSet] = await collection.aggregate([
+      { $match: { status } },
+      { $addFields: {
+        source: 'individual',
+        doctorType: 'individual',
+        sortDate: { $ifNull: ['$submittedAt', '$createdAt'] },
+      } },
+      { $unionWith: {
+        coll: 'doctorPortalDoctors',
+        pipeline: [
+          { $match: { verificationStatus: status } },
+          { $addFields: {
+            status: '$verificationStatus',
+            source: 'hospital',
+            doctorType: 'hospital',
+            sortDate: { $ifNull: ['$submittedAt', '$createdAt'] },
+            professionalEmail: '$email',
+            primarySpecialty: '$specialization',
+            additionalSpecialties: { $ifNull: ['$additionalSpecializations', []] },
+            accountStatus: {
+              $cond: [{ $eq: ['$isActive', true] }, 'active', 'inactive'],
+            },
+          } },
+        ],
+      } },
+      { $sort: { sortDate: 1, _id: 1 } },
+      { $facet: {
+        data: [
+          { $skip: (page - 1) * limit },
+          { $limit: limit },
+        ],
+        totalCount: [{ $count: 'count' }],
+      } },
+    ]).toArray();
+    const doctors = resultSet?.data || [];
+    const organizationIds = [...new Set(
+      doctors
+        .filter((doctor) => doctor.source === 'hospital' && doctor.organizationId)
+        .map((doctor) => doctor.organizationId.toString()),
+    )].map((id) => new ObjectId(id));
+    const organizations = organizationIds.length
+      ? await getDb().collection('doctorPortalOrganizations')
+        .find({ _id: { $in: organizationIds } }).toArray()
+      : [];
+    const organizationById = new Map(
+      organizations.map((organization) => [organization._id.toString(), organization]),
+    );
+    const results = doctors.map((doctor) => (
+      doctor.source === 'hospital'
+        ? adminHospitalDoctorResponse(
+          doctor,
+          organizationById.get(doctor.organizationId?.toString()) || null,
+        )
+        : adminDoctorResponse(doctor)
+    ));
+    const total = resultSet?.totalCount?.[0]?.count || 0;
     res.json({
       success: true,
-      count: doctors.length,
+      count: results.length,
       total,
       page,
       limit,
-      doctors: doctors.map(adminDoctorResponse),
+      doctors: results,
     });
   });
 
@@ -423,11 +514,21 @@ export function createDoctorControllers({ getDb }) {
     const doctor = await getDb().collection('doctorApplications').findOne({
       _id: new ObjectId(req.params.id),
     });
-    if (!doctor) {
+    if (doctor) {
+      res.json({ success: true, doctor: adminDoctorResponse(doctor) });
+      return;
+    }
+    const hospitalDoctor = await getDb().collection('doctorPortalDoctors').findOne({
+      _id: new ObjectId(req.params.id),
+    });
+    if (!hospitalDoctor) {
       res.status(404).json({ success: false, message: 'Doctor application not found.' });
       return;
     }
-    res.json({ success: true, doctor: adminDoctorResponse(doctor) });
+    const organization = await getDb().collection('doctorPortalOrganizations').findOne({
+      _id: hospitalDoctor.organizationId,
+    });
+    res.json({ success: true, doctor: adminHospitalDoctorResponse(hospitalDoctor, organization) });
   });
 
   const reviewAdminDoctor = asyncRoute(async (req, res) => {
@@ -443,7 +544,62 @@ export function createDoctorControllers({ getDb }) {
     const collection = getDb().collection('doctorApplications');
     const current = await collection.findOne({ _id: id });
     if (!current) {
-      res.status(404).json({ success: false, message: 'Doctor application not found.' });
+      const hospitalDoctors = getDb().collection('doctorPortalDoctors');
+      const hospitalDoctor = await hospitalDoctors.findOne({ _id: id });
+      if (!hospitalDoctor) {
+        res.status(404).json({ success: false, message: 'Doctor application not found.' });
+        return;
+      }
+      if (
+        hospitalDoctor.assignedFirebaseProjectId === req.user.firebaseProjectId
+        && hospitalDoctor.assignedFirebaseUid === req.user.uid
+      ) {
+        res.status(403).json({
+          success: false,
+          message: 'Administrators cannot review their own doctor profile.',
+        });
+        return;
+      }
+      if (hospitalDoctor.verificationStatus !== 'pending_review') {
+        res.status(409).json({
+          success: false,
+          message: `Cannot change application status from ${hospitalDoctor.verificationStatus} to ${status}.`,
+        });
+        return;
+      }
+      if (!['approved', 'rejected'].includes(status)) {
+        res.status(409).json({
+          success: false,
+          message: 'Hospital doctor applications can only be approved or rejected.',
+        });
+        return;
+      }
+      const now = new Date();
+      const reviewedHospitalDoctor = await hospitalDoctors.findOneAndUpdate(
+        { _id: id, verificationStatus: 'pending_review' },
+        { $set: {
+          verificationStatus: status,
+          reviewNote: status === 'approved' ? null : reviewNote,
+          reviewedBy: req.user.uid,
+          reviewedAt: now,
+          updatedAt: now,
+        } },
+        { returnDocument: 'after' },
+      );
+      if (!reviewedHospitalDoctor) {
+        res.status(409).json({
+          success: false,
+          message: 'The application changed while it was being reviewed. Reload and try again.',
+        });
+        return;
+      }
+      const organization = await getDb().collection('doctorPortalOrganizations').findOne({
+        _id: reviewedHospitalDoctor.organizationId,
+      });
+      res.json({
+        success: true,
+        doctor: adminHospitalDoctorResponse(reviewedHospitalDoctor, organization),
+      });
       return;
     }
     if (
