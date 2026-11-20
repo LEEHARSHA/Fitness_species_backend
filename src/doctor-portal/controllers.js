@@ -6,6 +6,10 @@ import {
   appointmentSummaryQuerySchema,
   appointmentStatusSchema,
   adminOrganizationDoctorsQuerySchema,
+  availabilityOverrideSchema,
+  availabilityQuerySchema,
+  consultationAccessSchema,
+  consultationSchema,
   departmentSchema,
   departmentUpdateSchema,
   doctorUpdateSchema,
@@ -16,9 +20,12 @@ import {
   organizationAdminQuerySchema,
   organizationSchema,
   organizationUpdateSchema,
+  notificationQuerySchema,
   patientDirectoryQuerySchema,
   patientVisitsQuerySchema,
   publicDoctorQuerySchema,
+  staffInvitationAcceptSchema,
+  staffInvitationSchema,
   verificationSchema,
 } from './validation.js';
 
@@ -27,6 +34,11 @@ const asyncRoute = (handler) => (req, res, next) => {
 };
 const idOf = (value) => new ObjectId(value);
 const hasId = (value) => /^[a-f\d]{24}$/i.test(value || '') && ObjectId.isValid(value);
+const hasDate = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
 const owner = (user) => ({ firebaseProjectId: user.firebaseProjectId, firebaseUid: user.uid });
 const userOwner = (document, user) => (
   document?.firebaseProjectId === user.firebaseProjectId && document?.firebaseUid === user.uid
@@ -43,6 +55,9 @@ const clean = (document) => {
     assignedFirebaseUid: _assignedFirebaseUid,
     patientFirebaseProjectId: _patientFirebaseProjectId,
     patientFirebaseUid: _patientFirebaseUid,
+    recipientFirebaseProjectId: _recipientFirebaseProjectId,
+    recipientFirebaseUid: _recipientFirebaseUid,
+    eventKey: _eventKey,
     slotKeys: _slotKeys,
     ...rest
   } = document;
@@ -83,15 +98,21 @@ const slotKeysFor = (doctorId, date, time, duration) => {
   return Array.from({ length: duration }, (_, index) => `${doctorId}:${date}:${String(Math.floor((start + index) / 60)).padStart(2, '0')}:${String((start + index) % 60).padStart(2, '0')}`);
 };
 const availabilityError = (doctor, date, time, appointmentType) => {
-  if (!doctor.workingDays?.includes(dayName(date))) return 'The doctor is not available on that day.';
-  if (time < doctor.openingTime || minutes(time) + doctor.appointmentDurationMinutes > minutes(doctor.closingTime)) {
+  const override = doctor.availabilityOverrides?.[date];
+  if (override?.isAvailable === false) return 'The doctor is not available on that date.';
+  const hasOverrideHours = override?.isAvailable === true && override.openingTime && override.closingTime;
+  if (!hasOverrideHours && !doctor.workingDays?.includes(dayName(date))) return 'The doctor is not available on that day.';
+  const openingTime = hasOverrideHours ? override.openingTime : doctor.openingTime;
+  const closingTime = hasOverrideHours ? override.closingTime : doctor.closingTime;
+  if (time < openingTime || minutes(time) + doctor.appointmentDurationMinutes > minutes(closingTime)) {
     return 'The requested time is outside the doctor’s availability.';
   }
   if (doctor.consultationMode === 'online' && appointmentType !== 'online') return 'This doctor only offers online consultations.';
   if (doctor.consultationMode === 'offline' && appointmentType !== 'in_person') return 'This doctor only offers in-person consultations.';
   const start = minutes(time);
   const end = start + doctor.appointmentDurationMinutes;
-  if ((doctor.breaks || []).some((period) => start < minutes(period.endTime) && end > minutes(period.startTime))) {
+  const breaks = override?.breaks || doctor.breaks || [];
+  if (breaks.some((period) => start < minutes(period.endTime) && end > minutes(period.startTime))) {
     return 'The requested time overlaps a scheduled break.';
   }
   return null;
@@ -109,6 +130,215 @@ export function createDoctorPortalControllers({ getDb }) {
       createdAt: new Date(),
     })
   );
+  const staffResponse = (staff) => {
+    if (!staff) return null;
+    const {
+      _id,
+      emailSearch: _emailSearch,
+      firebaseProjectId: _firebaseProjectId,
+      firebaseUid: _firebaseUid,
+      invitedBy: _invitedBy,
+      revokedBy: _revokedBy,
+      ...safeFields
+    } = staff;
+    return { ...safeFields, id: _id.toString() };
+  };
+  const operationalAppointmentResponse = (appointment) => ({
+    id: appointment._id.toString(),
+    appointmentId: appointment.appointmentId,
+    patientName: appointment.patientName,
+    doctorId: appointment.doctorId,
+    doctorName: appointment.doctorName,
+    doctorSpecialization: appointment.doctorSpecialization,
+    organizationId: appointment.organizationId?.toString() || null,
+    organizationName: appointment.organizationName,
+    departmentId: appointment.departmentId?.toString() || null,
+    appointmentDate: appointment.appointmentDate,
+    appointmentTime: appointment.appointmentTime,
+    appointmentType: appointment.appointmentType,
+    status: appointment.status,
+    statusHistory: (appointment.statusHistory || []).map(({ status, changedAt }) => ({ status, changedAt })),
+    rescheduleHistory: (appointment.rescheduleHistory || []).map(({
+      previousDate,
+      previousTime,
+      appointmentDate,
+      appointmentTime,
+      changedAt,
+    }) => ({ previousDate, previousTime, appointmentDate, appointmentTime, changedAt })),
+    createdAt: appointment.createdAt,
+    updatedAt: appointment.updatedAt,
+  });
+  const consultationResponse = (consultation) => {
+    if (!consultation) return null;
+    const { createdBy: _createdBy, updatedBy: _updatedBy, ...safeFields } = clean(consultation);
+    return safeFields;
+  };
+
+  async function hospitalStaff(user) {
+    return collection('doctorPortalStaff').find({
+      firebaseProjectId: user.firebaseProjectId,
+      firebaseUid: user.uid,
+      isActive: true,
+    }).toArray();
+  }
+
+  async function createAppointmentNotifications(appointment, eventType, eventKeySuffix) {
+    const recipients = [];
+    if (appointment.patientFirebaseProjectId && appointment.patientFirebaseUid) {
+      recipients.push({
+        firebaseProjectId: appointment.patientFirebaseProjectId,
+        uid: appointment.patientFirebaseUid,
+        type: 'patient',
+      });
+    }
+
+    if (hasId(appointment.doctorId)) {
+      const doctorId = idOf(appointment.doctorId);
+      if (appointment.organizationId) {
+        const [doctor, organization] = await Promise.all([
+          collection('doctorPortalDoctors').findOne({ _id: doctorId }),
+          collection('doctorPortalOrganizations').findOne({ _id: appointment.organizationId }),
+        ]);
+        if (doctor?.assignedFirebaseProjectId && doctor.assignedFirebaseUid) {
+          recipients.push({
+            firebaseProjectId: doctor.assignedFirebaseProjectId,
+            uid: doctor.assignedFirebaseUid,
+            type: 'doctor',
+          });
+        }
+        if (organization?.adminFirebaseProjectId && organization.adminFirebaseUid) {
+          recipients.push({
+            firebaseProjectId: organization.adminFirebaseProjectId,
+            uid: organization.adminFirebaseUid,
+            type: 'hospital',
+          });
+        }
+      } else {
+        const doctor = await collection('doctorApplications').findOne({ _id: doctorId });
+        if (doctor?.firebaseProjectId && doctor.firebaseUid) {
+          recipients.push({
+            firebaseProjectId: doctor.firebaseProjectId,
+            uid: doctor.firebaseUid,
+            type: 'doctor',
+          });
+        }
+      }
+    }
+
+    const now = new Date();
+    const title = eventType === 'appointment_requested'
+      ? 'New appointment request'
+      : eventType === 'appointment_rescheduled'
+        ? 'Appointment rescheduled'
+        : 'Appointment status updated';
+    const body = eventType === 'appointment_requested'
+      ? `A patient requested an appointment for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+      : eventType === 'appointment_rescheduled'
+        ? `An appointment was rescheduled to ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+        : `Appointment status changed to ${appointment.status}.`;
+
+    for (const recipient of recipients) {
+      const eventKey = [
+        appointment._id.toString(),
+        eventKeySuffix,
+        recipient.firebaseProjectId,
+        recipient.uid,
+      ].join(':');
+      await collection('doctorPortalNotifications').updateOne(
+        { eventKey },
+        { $setOnInsert: {
+          eventKey,
+          recipientFirebaseProjectId: recipient.firebaseProjectId,
+          recipientFirebaseUid: recipient.uid,
+          recipientType: recipient.type,
+          organizationId: appointment.organizationId || null,
+          appointmentId: appointment._id,
+          type: eventType,
+          title,
+          body,
+          readAt: null,
+          scheduledFor: null,
+          isActive: true,
+          createdAt: now,
+        } },
+        { upsert: true },
+      );
+    }
+  }
+
+  async function updateFollowUpNotifications(appointment, consultation, previous) {
+    const oldReminderAt = previous?.followUpReminderAt
+      ? new Date(previous.followUpReminderAt).getTime()
+      : null;
+    const reminderAt = consultation.followUpReminderAt
+      ? new Date(consultation.followUpReminderAt).getTime()
+      : null;
+    if (oldReminderAt === reminderAt
+      && previous?.followUpDate === consultation.followUpDate) return;
+
+    const recipients = [];
+    if (appointment.patientFirebaseProjectId && appointment.patientFirebaseUid) {
+      recipients.push({
+        firebaseProjectId: appointment.patientFirebaseProjectId,
+        uid: appointment.patientFirebaseUid,
+        type: 'patient',
+      });
+    }
+    if (hasId(appointment.doctorId)) {
+      const doctorId = idOf(appointment.doctorId);
+      const doctor = appointment.organizationId
+        ? await collection('doctorPortalDoctors').findOne({ _id: doctorId })
+        : await collection('doctorApplications').findOne({ _id: doctorId });
+      const firebaseProjectId = appointment.organizationId
+        ? doctor?.assignedFirebaseProjectId
+        : doctor?.firebaseProjectId;
+      const firebaseUid = appointment.organizationId
+        ? doctor?.assignedFirebaseUid
+        : doctor?.firebaseUid;
+      if (firebaseProjectId && firebaseUid) {
+        recipients.push({ firebaseProjectId, uid: firebaseUid, type: 'doctor' });
+      }
+    }
+
+    for (const recipient of recipients) {
+      const eventKey = [
+        appointment._id.toString(),
+        'follow-up',
+        recipient.firebaseProjectId,
+        recipient.uid,
+      ].join(':');
+      const filter = { eventKey };
+      if (!reminderAt || !consultation.followUpDate) {
+        await collection('doctorPortalNotifications').updateOne(
+          filter,
+          { $set: { isActive: false, updatedAt: new Date() } },
+        );
+        continue;
+      }
+      const now = new Date();
+      await collection('doctorPortalNotifications').updateOne(
+        filter,
+        {
+          $set: {
+            recipientFirebaseProjectId: recipient.firebaseProjectId,
+            recipientFirebaseUid: recipient.uid,
+            recipientType: recipient.type,
+            organizationId: appointment.organizationId || null,
+            appointmentId: appointment._id,
+            type: 'follow_up_reminder',
+            title: 'Follow-up reminder',
+            body: `A follow-up is scheduled for ${consultation.followUpDate}.`,
+            scheduledFor: new Date(reminderAt),
+            readAt: null,
+            isActive: true,
+            updatedAt: now,
+          },
+          $setOnInsert: { eventKey, createdAt: now },
+        },
+        { upsert: true },
+      );
+    }
+  }
 
   async function reserveDailyCapacity(doctorId, appointmentDate, limit) {
     const capacityId = `${doctorId}:${appointmentDate}`;
@@ -178,7 +408,54 @@ export function createDoctorPortalControllers({ getDb }) {
     if (assigned) return { doctorId: assigned._id.toString() };
     const doctor = await individualDoctor(user);
     if (doctor) return { doctorId: doctor._id.toString() };
+    const memberships = await hospitalStaff(user);
+    if (memberships.length) {
+      return {
+        organizationId: { $in: memberships.map(({ organizationId }) => organizationId) },
+        ...(query.doctorId ? { doctorId: query.doctorId } : {}),
+      };
+    }
     return null;
+  }
+
+  async function ownedDoctorProfile(user) {
+    const assigned = await assignedDoctor(user);
+    if (assigned) {
+      return {
+        doctor: assigned,
+        collectionName: 'doctorPortalDoctors',
+        filter: {
+          _id: assigned._id,
+          assignedFirebaseProjectId: user.firebaseProjectId,
+          assignedFirebaseUid: user.uid,
+          isActive: true,
+          verificationStatus: 'approved',
+        },
+      };
+    }
+    const individual = await individualDoctor(user);
+    if (individual) {
+      return {
+        doctor: individual,
+        collectionName: 'doctorApplications',
+        filter: { _id: individual._id, ...owner(user), status: 'approved' },
+      };
+    }
+    return null;
+  }
+
+  async function isTreatingDoctor(user, doctorId) {
+    const profile = await ownedDoctorProfile(user);
+    return Boolean(profile && profile.doctor._id.toString() === String(doctorId));
+  }
+
+  async function canAccessConsultation(user, appointment, consultation) {
+    if (await isTreatingDoctor(user, appointment.doctorId)) return true;
+    const profile = await ownedDoctorProfile(user);
+    return Boolean(
+      profile
+      && consultation?.authorizedDoctorIds?.includes(profile.doctor._id.toString()),
+    );
   }
 
   async function providerById(doctorId) {
@@ -917,6 +1194,487 @@ export function createDoctorPortalControllers({ getDb }) {
     res.json({ success: true, doctor: clean(linked), organization: clean(org) });
   });
 
+  const listOrganizationStaff = asyncRoute(async (req, res) => {
+    const organization = await currentOrganization(req.user);
+    if (!organization) {
+      res.status(403).json({ success: false, message: 'Only the organization administrator can manage staff.' });
+      return;
+    }
+    const staff = await collection('doctorPortalStaff')
+      .find({ organizationId: organization._id })
+      .sort({ createdAt: -1 }).toArray();
+    await audit(req.user, 'organization_staff_listed', organization._id, { resultCount: staff.length });
+    res.json({ success: true, staff: staff.map(staffResponse) });
+  });
+
+  const inviteOrganizationStaff = asyncRoute(async (req, res) => {
+    const parsed = staffInvitationSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    const organization = await currentOrganization(req.user);
+    if (!organization) {
+      res.status(403).json({ success: false, message: 'Only the organization administrator can invite staff.' });
+      return;
+    }
+    if (organization.verificationStatus !== 'approved') {
+      res.status(403).json({ success: false, message: 'Only an approved organization can invite staff.' });
+      return;
+    }
+    const email = parsed.data.email.toLocaleLowerCase('en-US');
+    const staffCollection = collection('doctorPortalStaff');
+    const existing = await staffCollection.findOne({
+      organizationId: organization._id,
+      emailSearch: email,
+    });
+    if (existing?.isActive || existing?.invitationStatus === 'pending') {
+      res.status(409).json({ success: false, message: 'This email already has active staff access or a pending invitation.' });
+      return;
+    }
+    const now = new Date();
+    let staff;
+    if (existing) {
+      staff = await staffCollection.findOneAndUpdate(
+        { _id: existing._id, organizationId: organization._id, isActive: { $ne: true } },
+        { $set: {
+          email: parsed.data.email.trim(),
+          emailSearch: email,
+          invitationStatus: 'pending',
+          isActive: false,
+          invitedBy: req.user.uid,
+          invitedAt: now,
+          acceptedAt: null,
+          revokedAt: null,
+          firebaseProjectId: null,
+          firebaseUid: null,
+          updatedAt: now,
+        } },
+        { returnDocument: 'after' },
+      );
+      if (!staff) {
+        res.status(409).json({ success: false, message: 'Staff access changed. Reload and try again.' });
+        return;
+      }
+    } else {
+      const document = {
+        organizationId: organization._id,
+        email: parsed.data.email.trim(),
+        emailSearch: email,
+        invitationStatus: 'pending',
+        isActive: false,
+        invitedBy: req.user.uid,
+        invitedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const inserted = await staffCollection.insertOne(document);
+      staff = { ...document, _id: inserted.insertedId };
+    }
+    await audit(req.user, 'organization_staff_invited', staff._id, {
+      organizationId: organization._id,
+    });
+    res.status(201).json({ success: true, staff: staffResponse(staff) });
+  });
+
+  const acceptOrganizationStaffInvitation = asyncRoute(async (req, res) => {
+    const parsed = staffInvitationAcceptSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    if (!req.user.emailVerified || !req.user.email) {
+      res.status(403).json({ success: false, code: 'VERIFIED_EMAIL_REQUIRED', message: 'Verify the invited staff email before accepting access.' });
+      return;
+    }
+    const emailSearch = req.user.email.toLocaleLowerCase('en-US');
+    const staff = await collection('doctorPortalStaff').findOneAndUpdate(
+      {
+        _id: idOf(parsed.data.staffId),
+        emailSearch,
+        invitationStatus: 'pending',
+        isActive: false,
+      },
+      { $set: {
+        invitationStatus: 'active',
+        isActive: true,
+        firebaseProjectId: req.user.firebaseProjectId,
+        firebaseUid: req.user.uid,
+        acceptedAt: new Date(),
+        updatedAt: new Date(),
+      } },
+      { returnDocument: 'after' },
+    );
+    if (!staff) {
+      res.status(404).json({ success: false, message: 'No pending staff invitation matches this verified account.' });
+      return;
+    }
+    await audit(req.user, 'organization_staff_invitation_accepted', staff._id, {
+      organizationId: staff.organizationId,
+    });
+    res.json({ success: true, staff: staffResponse(staff) });
+  });
+
+  const deactivateOrganizationStaff = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.staffId)) {
+      res.status(400).json({ success: false, message: 'Invalid staff ID.' });
+      return;
+    }
+    const organization = await currentOrganization(req.user);
+    if (!organization) {
+      res.status(403).json({ success: false, message: 'Only the organization administrator can deactivate staff.' });
+      return;
+    }
+    const staff = await collection('doctorPortalStaff').findOneAndUpdate(
+      { _id: idOf(req.params.staffId), organizationId: organization._id, invitationStatus: { $ne: 'revoked' } },
+      { $set: {
+        invitationStatus: 'revoked',
+        isActive: false,
+        revokedBy: req.user.uid,
+        revokedAt: new Date(),
+        updatedAt: new Date(),
+      } },
+      { returnDocument: 'after' },
+    );
+    if (!staff) {
+      res.status(404).json({ success: false, message: 'Staff member was not found in this organization.' });
+      return;
+    }
+    await audit(req.user, 'organization_staff_deactivated', staff._id, {
+      organizationId: organization._id,
+    });
+    res.json({ success: true, staff: staffResponse(staff) });
+  });
+
+  const getAvailabilityCalendar = asyncRoute(async (req, res) => {
+    const parsed = availabilityQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const organization = await currentOrganization(req.user);
+    const ownProfile = organization ? null : await ownedDoctorProfile(req.user);
+    const memberships = ownProfile || organization ? [] : await hospitalStaff(req.user);
+    let doctor;
+    if (ownProfile) {
+      if (parsed.data.doctorId && parsed.data.doctorId !== ownProfile.doctor._id.toString()) {
+        res.status(403).json({ success: false, message: 'Doctors can only access their own calendar.' });
+        return;
+      }
+      doctor = ownProfile.doctor;
+    } else if (organization) {
+      if (!parsed.data.doctorId) {
+        res.status(400).json({ success: false, message: 'Select a doctor to view the organization calendar.' });
+        return;
+      }
+      doctor = await collection('doctorPortalDoctors').findOne({
+        _id: idOf(parsed.data.doctorId),
+        organizationId: organization._id,
+      });
+    } else if (memberships.length) {
+      if (!parsed.data.doctorId) {
+        res.status(400).json({ success: false, message: 'Select an assigned doctor to view the organization calendar.' });
+        return;
+      }
+      doctor = await collection('doctorPortalDoctors').findOne({
+        _id: idOf(parsed.data.doctorId),
+        organizationId: { $in: memberships.map(({ organizationId }) => organizationId) },
+      });
+    } else {
+      res.status(403).json({ success: false, message: 'Calendar access is not authorized.' });
+      return;
+    }
+    if (!doctor) {
+      res.status(404).json({ success: false, message: 'Doctor was not found in your authorized scope.' });
+      return;
+    }
+
+    const from = parsed.data.from || new Date().toISOString().slice(0, 10);
+    const defaultToDate = new Date(`${from}T00:00:00.000Z`);
+    defaultToDate.setUTCDate(defaultToDate.getUTCDate() + 30);
+    const to = parsed.data.to || defaultToDate.toISOString().slice(0, 10);
+    if (to < from) {
+      res.status(400).json({ success: false, message: 'The end date must not precede the start date.' });
+      return;
+    }
+    if ((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 > 90) {
+      res.status(400).json({ success: false, message: 'Calendar ranges cannot exceed 90 days.' });
+      return;
+    }
+    const doctorId = doctor._id.toString();
+    const appointments = await collection('doctorPortalAppointments')
+      .find({
+        doctorId,
+        appointmentDate: { $gte: from, $lte: to },
+        status: { $in: ['requested', 'confirmed'] },
+      })
+      .sort({ appointmentDate: 1, appointmentTime: 1 }).toArray();
+    const overrides = Object.entries(doctor.availabilityOverrides || {})
+      .filter(([date]) => date >= from && date <= to)
+      .map(([date, override]) => ({
+        date,
+        ...override,
+        ...(ownProfile ? {} : { reason: undefined }),
+      }));
+    await audit(req.user, 'availability_calendar_viewed', doctor._id, { from, to });
+    res.json({
+      success: true,
+      doctorId,
+      range: { from, to },
+      schedule: {
+        workingDays: doctor.workingDays || [],
+        openingTime: doctor.openingTime || null,
+        closingTime: doctor.closingTime || null,
+        timeZone: doctor.timeZone || null,
+        appointmentDurationMinutes: doctor.appointmentDurationMinutes || null,
+        breaks: doctor.breaks || [],
+      },
+      overrides,
+      appointments: appointments.map(operationalAppointmentResponse),
+    });
+  });
+
+  const setAvailabilityOverride = asyncRoute(async (req, res) => {
+    if (!hasDate(req.params.date)) {
+      res.status(400).json({ success: false, message: 'Invalid availability date.' });
+      return;
+    }
+    const parsed = availabilityOverrideSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    if (req.params.date < new Date().toISOString().slice(0, 10)) {
+      res.status(400).json({ success: false, message: 'Availability cannot be changed for a past date.' });
+      return;
+    }
+    const profile = await ownedDoctorProfile(req.user);
+    if (!profile) {
+      res.status(403).json({ success: false, message: 'Only an approved, active doctor can change personal availability.' });
+      return;
+    }
+    const update = await collection(profile.collectionName).findOneAndUpdate(
+      profile.filter,
+      { $set: {
+        [`availabilityOverrides.${req.params.date}`]: parsed.data,
+        updatedAt: new Date(),
+      } },
+      { returnDocument: 'after' },
+    );
+    if (!update) {
+      res.status(404).json({ success: false, message: 'Doctor profile is no longer available.' });
+      return;
+    }
+    await audit(req.user, 'availability_override_set', profile.doctor._id, {
+      date: req.params.date,
+      isAvailable: parsed.data.isAvailable,
+    });
+    res.json({
+      success: true,
+      doctorId: profile.doctor._id.toString(),
+      date: req.params.date,
+      override: parsed.data,
+    });
+  });
+
+  const removeAvailabilityOverride = asyncRoute(async (req, res) => {
+    if (!hasDate(req.params.date)) {
+      res.status(400).json({ success: false, message: 'Invalid availability date.' });
+      return;
+    }
+    const profile = await ownedDoctorProfile(req.user);
+    if (!profile) {
+      res.status(403).json({ success: false, message: 'Only an approved, active doctor can change personal availability.' });
+      return;
+    }
+    const result = await collection(profile.collectionName).updateOne(
+      profile.filter,
+      { $unset: { [`availabilityOverrides.${req.params.date}`]: '' }, $set: { updatedAt: new Date() } },
+    );
+    if (!result.matchedCount && !result.modifiedCount) {
+      res.status(404).json({ success: false, message: 'Doctor profile is no longer available.' });
+      return;
+    }
+    await audit(req.user, 'availability_override_removed', profile.doctor._id, { date: req.params.date });
+    res.json({ success: true, doctorId: profile.doctor._id.toString(), date: req.params.date });
+  });
+
+  const listNotifications = asyncRoute(async (req, res) => {
+    const parsed = notificationQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const filter = {
+      recipientFirebaseProjectId: req.user.firebaseProjectId,
+      recipientFirebaseUid: req.user.uid,
+      isActive: { $ne: false },
+      $or: [{ scheduledFor: null }, { scheduledFor: { $lte: new Date() } }],
+      ...(parsed.data.unread ? { readAt: null } : {}),
+    };
+    const notifications = collection('doctorPortalNotifications');
+    const [items, total] = await Promise.all([
+      notifications.find(filter).sort({ createdAt: -1, _id: -1 })
+        .skip((parsed.data.page - 1) * parsed.data.limit).limit(parsed.data.limit).toArray(),
+      notifications.countDocuments(filter),
+    ]);
+    res.json({
+      success: true,
+      notifications: items.map(clean),
+      total,
+      page: parsed.data.page,
+      limit: parsed.data.limit,
+    });
+  });
+
+  const markNotificationRead = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.notificationId)) {
+      res.status(400).json({ success: false, message: 'Invalid notification ID.' });
+      return;
+    }
+    const filter = {
+      _id: idOf(req.params.notificationId),
+      recipientFirebaseProjectId: req.user.firebaseProjectId,
+      recipientFirebaseUid: req.user.uid,
+      isActive: { $ne: false },
+    };
+    const notifications = collection('doctorPortalNotifications');
+    const notification = await notifications.findOneAndUpdate(
+      filter,
+      { $set: { readAt: new Date() } },
+      { returnDocument: 'after' },
+    );
+    if (!notification) {
+      res.status(404).json({ success: false, message: 'Notification was not found.' });
+      return;
+    }
+    res.json({ success: true, notification: clean(notification) });
+  });
+
+  const getConsultationRecord = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.appointmentId)) {
+      res.status(400).json({ success: false, message: 'Invalid appointment ID.' });
+      return;
+    }
+    const appointmentId = idOf(req.params.appointmentId);
+    const appointment = await collection('doctorPortalAppointments').findOne({ _id: appointmentId });
+    if (!appointment) {
+      res.status(404).json({ success: false, message: 'Appointment was not found.' });
+      return;
+    }
+    const consultation = await collection('doctorPortalConsultations').findOne({ appointmentId });
+    if (!(await canAccessConsultation(req.user, appointment, consultation))) {
+      res.status(403).json({ success: false, message: 'This account is not authorized to access the consultation record.' });
+      return;
+    }
+    await audit(req.user, 'consultation_record_viewed', appointmentId, { doctorId: appointment.doctorId });
+    res.json({ success: true, consultation: consultationResponse(consultation) });
+  });
+
+  const saveConsultationRecord = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.appointmentId)) {
+      res.status(400).json({ success: false, message: 'Invalid appointment ID.' });
+      return;
+    }
+    const parsed = consultationSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    const appointmentId = idOf(req.params.appointmentId);
+    const appointment = await collection('doctorPortalAppointments').findOne({ _id: appointmentId });
+    if (!appointment) {
+      res.status(404).json({ success: false, message: 'Appointment was not found.' });
+      return;
+    }
+    const now = new Date();
+    const consultationCollection = collection('doctorPortalConsultations');
+    const previous = await consultationCollection.findOne({ appointmentId });
+    if (!(await canAccessConsultation(req.user, appointment, previous))) {
+      res.status(403).json({ success: false, message: 'This account is not authorized to update the consultation record.' });
+      return;
+    }
+    const consultationFields = {
+      ...parsed.data,
+      ...(typeof parsed.data.followUpReminderAt === 'string'
+        ? { followUpReminderAt: new Date(parsed.data.followUpReminderAt) }
+        : {}),
+    };
+    const consultation = await consultationCollection.findOneAndUpdate(
+      { appointmentId },
+      {
+        $set: {
+          ...consultationFields,
+          doctorId: appointment.doctorId,
+          organizationId: appointment.organizationId || null,
+          updatedBy: req.user.uid,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          _id: new ObjectId(),
+          appointmentId,
+          createdBy: req.user.uid,
+          createdAt: now,
+        },
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+    await updateFollowUpNotifications(appointment, consultation, previous);
+    await audit(req.user, 'consultation_record_saved', consultation._id, {
+      appointmentId,
+      doctorId: appointment.doctorId,
+      hasFollowUp: Boolean(consultation.followUpDate),
+    });
+    res.json({ success: true, consultation: consultationResponse(consultation) });
+  });
+
+  const setConsultationAccess = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.appointmentId)) {
+      res.status(400).json({ success: false, message: 'Invalid appointment ID.' });
+      return;
+    }
+    const parsed = consultationAccessSchema.safeParse(req.body);
+    if (!parsed.success) return resultError(res, parsed);
+    const appointmentId = idOf(req.params.appointmentId);
+    const appointment = await collection('doctorPortalAppointments').findOne({ _id: appointmentId });
+    if (!appointment) {
+      res.status(404).json({ success: false, message: 'Appointment was not found.' });
+      return;
+    }
+    if (!(await isTreatingDoctor(req.user, appointment.doctorId))) {
+      res.status(403).json({ success: false, message: 'Only the treating doctor can authorize clinical access.' });
+      return;
+    }
+    const doctorIds = parsed.data.doctorIds.map(idOf);
+    const authorizedHospitalDoctors = appointment.organizationId
+      ? await collection('doctorPortalDoctors').find({
+        _id: { $in: doctorIds },
+        organizationId: appointment.organizationId,
+        isActive: true,
+        verificationStatus: 'approved',
+      }).toArray()
+      : [];
+    const authorizedIndividualDoctors = appointment.organizationId
+      ? []
+      : await collection('doctorApplications').find({
+        _id: { $in: doctorIds },
+        status: 'approved',
+      }).toArray();
+    const approvedIds = new Set([
+      ...authorizedHospitalDoctors,
+      ...authorizedIndividualDoctors,
+    ].map(({ _id }) => _id.toString()));
+    if (doctorIds.some((doctorId) => !approvedIds.has(doctorId.toString()))) {
+      res.status(403).json({
+        success: false,
+        message: 'Clinical access can only be granted to approved doctors in the same organization.',
+      });
+      return;
+    }
+    const consultationCollection = collection('doctorPortalConsultations');
+    const existing = await consultationCollection.findOne({ appointmentId });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Create a consultation record before granting clinical access.' });
+      return;
+    }
+    const consultation = await consultationCollection.findOneAndUpdate(
+      { _id: existing._id, appointmentId },
+      { $set: { authorizedDoctorIds: [...approvedIds], updatedBy: req.user.uid, updatedAt: new Date() } },
+      { returnDocument: 'after' },
+    );
+    await audit(req.user, 'consultation_access_updated', consultation._id, {
+      appointmentId,
+      authorizedDoctorCount: approvedIds.size,
+    });
+    res.json({
+      success: true,
+      consultationId: consultation._id.toString(),
+      authorizedDoctorIds: consultation.authorizedDoctorIds,
+    });
+  });
+
   const bookAppointment = asyncRoute(async (req, res) => {
     const parsed = appointmentBookingSchema.safeParse(req.body);
     if (!parsed.success) return resultError(res, parsed);
@@ -980,6 +1738,7 @@ export function createDoctorPortalControllers({ getDb }) {
       doctorId: provider.doctorId,
       organizationId: provider.organization?._id || null,
     });
+    await createAppointmentNotifications(appointment, 'appointment_requested', 'booked');
     res.status(201).json({ success: true, appointment: clean(appointment) });
   });
 
@@ -1027,7 +1786,18 @@ export function createDoctorPortalControllers({ getDb }) {
         status: query.status || null,
       },
     });
-    res.json({ success: true, appointments: items.map(clean), total, page: query.page, limit: query.limit });
+    const actorDoctor = await ownedDoctorProfile(req.user);
+    res.json({
+      success: true,
+      appointments: items.map((item) => (
+        actorDoctor?.doctor._id.toString() === String(item.doctorId)
+          ? clean(item)
+          : operationalAppointmentResponse(item)
+      )),
+      total,
+      page: query.page,
+      limit: query.limit,
+    });
   });
 
   const getAppointmentSummary = asyncRoute(async (req, res) => {
@@ -1163,6 +1933,10 @@ export function createDoctorPortalControllers({ getDb }) {
       res.status(403).json({ success: false, message: 'This account has no authorized doctor or hospital patient access.' });
       return;
     }
+    if ((await hospitalStaff(req.user)).length && !(await ownedDoctorProfile(req.user))) {
+      res.status(403).json({ success: false, message: 'Operational staff do not have access to the patient directory.' });
+      return;
+    }
     const filter = { ...scope };
     if (query.from || query.to) {
       filter.appointmentDate = {
@@ -1290,6 +2064,10 @@ export function createDoctorPortalControllers({ getDb }) {
       res.status(403).json({ success: false, message: 'Patient visit access is not authorized.' });
       return;
     }
+    if ((await hospitalStaff(req.user)).length && !(await ownedDoctorProfile(req.user))) {
+      res.status(403).json({ success: false, message: 'Operational staff do not have access to patient visit histories.' });
+      return;
+    }
     const appointments = collection('doctorPortalAppointments');
     const anchor = await appointments.findOne({ _id: idOf(req.params.patientId), ...scope });
     if (!anchor) {
@@ -1339,7 +2117,10 @@ export function createDoctorPortalControllers({ getDb }) {
       return;
     }
     await audit(req.user, 'appointment_viewed', appointment._id, { doctorId: appointment.doctorId });
-    res.json({ success: true, appointment: clean(appointment) });
+    const appointmentResponse = await isTreatingDoctor(req.user, appointment.doctorId)
+      ? clean(appointment)
+      : operationalAppointmentResponse(appointment);
+    res.json({ success: true, appointment: appointmentResponse });
   });
 
   const updateAppointmentStatus = asyncRoute(async (req, res) => {
@@ -1398,7 +2179,15 @@ export function createDoctorPortalControllers({ getDb }) {
       previousStatus: current.status,
       newStatus: updated.status,
     });
-    res.json({ success: true, appointment: clean(updated) });
+    await createAppointmentNotifications(
+      updated,
+      'appointment_status_changed',
+      `status:${updated.status}:${updated.updatedAt.getTime()}`,
+    );
+    const appointmentResponse = await isTreatingDoctor(req.user, updated.doctorId)
+      ? clean(updated)
+      : operationalAppointmentResponse(updated);
+    res.json({ success: true, appointment: appointmentResponse });
   });
 
   const rescheduleAppointment = asyncRoute(async (req, res) => {
@@ -1490,7 +2279,15 @@ export function createDoctorPortalControllers({ getDb }) {
       throw error;
     }
     await audit(req.user, 'appointment_rescheduled', id, { doctorId: current.doctorId });
-    res.json({ success: true, appointment: clean(updated) });
+    await createAppointmentNotifications(
+      updated,
+      'appointment_rescheduled',
+      `rescheduled:${updated.updatedAt.getTime()}`,
+    );
+    const appointmentResponse = await isTreatingDoctor(req.user, updated.doctorId)
+      ? clean(updated)
+      : operationalAppointmentResponse(updated);
+    res.json({ success: true, appointment: appointmentResponse });
   });
 
   return {
@@ -1518,6 +2315,18 @@ export function createDoctorPortalControllers({ getDb }) {
     listPendingHospitalDoctors,
     reviewHospitalDoctor,
     acceptDoctorInvitation,
+    listOrganizationStaff,
+    inviteOrganizationStaff,
+    acceptOrganizationStaffInvitation,
+    deactivateOrganizationStaff,
+    getAvailabilityCalendar,
+    setAvailabilityOverride,
+    removeAvailabilityOverride,
+    listNotifications,
+    markNotificationRead,
+    getConsultationRecord,
+    saveConsultationRecord,
+    setConsultationAccess,
     bookAppointment,
     listAppointments,
     getAppointmentSummary,

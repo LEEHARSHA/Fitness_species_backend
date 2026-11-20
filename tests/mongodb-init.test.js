@@ -61,8 +61,11 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorApplications',
     'doctorPortalOrganizations',
     'doctorPortalDoctors',
+    'doctorPortalStaff',
     'doctorPortalDepartments',
     'doctorPortalAppointments',
+    'doctorPortalConsultations',
+    'doctorPortalNotifications',
     'doctorPortalDailyCapacity',
     'doctorPortalAuditLogs',
   ]);
@@ -74,10 +77,13 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorApplications',
     'doctorPortalAppointments',
     'doctorPortalAuditLogs',
+    'doctorPortalConsultations',
     'doctorPortalDailyCapacity',
     'doctorPortalDepartments',
     'doctorPortalDoctors',
+    'doctorPortalNotifications',
     'doctorPortalOrganizations',
+    'doctorPortalStaff',
     'products',
     'sellerProfiles',
   ]);
@@ -141,6 +147,22 @@ test('MongoDB index initialization is repeatable and creates required indexes', 
     index.name === 'doctorApplications'
     && index.keys.status === 1
     && index.keys.submittedAt === 1
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'doctorPortalStaff'
+    && index.keys.organizationId === 1
+    && index.keys.emailSearch === 1
+    && index.options.unique === true
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'doctorPortalConsultations'
+    && index.keys.appointmentId === 1
+    && index.options.unique === true
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'doctorPortalNotifications'
+    && index.keys.eventKey === 1
+    && index.options.unique === true
   )));
 });
 

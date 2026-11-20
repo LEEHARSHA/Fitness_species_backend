@@ -6,7 +6,7 @@ import { createApp } from '../src/app.js';
 
 const primaryProjectId = 'sellerportal-2786c';
 const records = new Map();
-const claims = Object.fromEntries(['admin', 'hospital', 'other-hospital', 'patient', 'doctor'].map((uid) => [
+const claims = Object.fromEntries(['admin', 'hospital', 'other-hospital', 'patient', 'doctor', 'clinical-colleague', 'staff', 'other-staff'].map((uid) => [
   uid,
   {
     uid,
@@ -39,7 +39,7 @@ function same(left, right) {
 function matches(document, query = {}) {
   return Object.entries(query).every(([key, expected]) => {
     if (key === '$or') return expected.some((clause) => matches(document, clause));
-    const actual = document[key];
+    const actual = key.split('.').reduce((value, part) => value?.[part], document);
     if (expected instanceof RegExp) return expected.test(String(actual || ''));
     if (expected && typeof expected === 'object' && !(expected instanceof ObjectId) && !(expected instanceof Date)) {
       if ('$in' in expected && !expected.$in.some((value) => same(actual, value))) return false;
@@ -74,7 +74,7 @@ class TestCollection {
     const stored = { ...document, _id: document._id || new ObjectId() };
     if (this.name === 'doctorPortalAppointments'
       && this.items().some((item) => item.doctorId === stored.doctorId
-        && item.slotKeys.some((key) => stored.slotKeys.includes(key)))) {
+        && item.slotKeys?.some((key) => stored.slotKeys?.includes(key)))) {
       const error = new Error('Duplicate slot.');
       error.code = 11000;
       throw error;
@@ -86,12 +86,13 @@ class TestCollection {
   async findOneAndUpdate(query, update, options = {}) {
     let item = this.items().find((record) => matches(record, query));
     if (!item && options.upsert) {
-      if (this.items().some((record) => same(record._id, query._id))) {
+      const newId = query._id || update.$setOnInsert?._id || new ObjectId();
+      if (this.items().some((record) => same(record._id, newId))) {
         const error = new Error('Duplicate key.');
         error.code = 11000;
         throw error;
       }
-      item = { ...(update.$setOnInsert || {}), _id: query._id };
+      item = { ...(update.$setOnInsert || {}), _id: newId };
       this.items().push(item);
     }
     if (!item) return null;
@@ -105,7 +106,23 @@ class TestCollection {
         throw error;
       }
     }
-    Object.assign(item, update.$set || {});
+    for (const [field, value] of Object.entries(update.$set || {})) {
+      const parts = field.split('.');
+      const leaf = parts.pop();
+      let target = item;
+      for (const part of parts) {
+        target[part] ||= {};
+        target = target[part];
+      }
+      target[leaf] = value;
+    }
+    for (const field of Object.keys(update.$unset || {})) {
+      const parts = field.split('.');
+      const leaf = parts.pop();
+      let target = item;
+      for (const part of parts) target = target?.[part];
+      if (target) delete target[leaf];
+    }
     for (const [field, amount] of Object.entries(update.$inc || {})) {
       item[field] = (item[field] || 0) + amount;
     }
@@ -116,13 +133,46 @@ class TestCollection {
     return item;
   }
 
-  async updateOne(query, update) {
+  async updateOne(query, update, options = {}) {
     const item = this.items().find((record) => matches(record, query));
-    if (!item) return { modifiedCount: 0 };
+    if (!item && options.upsert) {
+      const newId = query._id || update.$setOnInsert?._id || new ObjectId();
+      const inserted = { ...(update.$setOnInsert || {}), _id: newId };
+      for (const [field, value] of Object.entries(update.$set || {})) {
+        const parts = field.split('.');
+        const leaf = parts.pop();
+        let target = inserted;
+        for (const part of parts) {
+          target[part] ||= {};
+          target = target[part];
+        }
+        target[leaf] = value;
+      }
+      this.items().push(inserted);
+      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+    }
+    if (!item) return { matchedCount: 0, modifiedCount: 0 };
     for (const [field, amount] of Object.entries(update.$inc || {})) {
       item[field] = (item[field] || 0) + amount;
     }
-    return { modifiedCount: 1 };
+    for (const [field, value] of Object.entries(update.$set || {})) {
+      const parts = field.split('.');
+      const leaf = parts.pop();
+      let target = item;
+      for (const part of parts) {
+        target[part] ||= {};
+        target = target[part];
+      }
+      target[leaf] = value;
+    }
+    for (const field of Object.keys(update.$unset || {})) {
+      const parts = field.split('.');
+      const leaf = parts.pop();
+      let target = item;
+      for (const part of parts) target = target?.[part];
+      if (target) delete target[leaf];
+    }
+    return { matchedCount: 1, modifiedCount: 1 };
   }
 
   async updateMany(query, update) {
@@ -365,6 +415,50 @@ function doctor() {
     dailyAppointmentLimit: 2,
     breaks: [{ startTime: '13:00', endTime: '14:00' }],
   };
+}
+
+async function createApprovedHospitalDoctor({
+  hospitalToken = 'hospital',
+  organizationName = 'North Hospital',
+  adminName = 'Admin One',
+  doctorProfile = doctor(),
+  linkDoctor = true,
+} = {}) {
+  const registered = await auth(hospitalToken)(
+    'post',
+    '/api/doctor-portal/organizations',
+    organization(organizationName, adminName),
+  );
+  const organizationId = registered.body.organization.id;
+  await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/organizations/${organizationId}/review`,
+    { status: 'approved' },
+  );
+  const created = await auth(hospitalToken)(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    doctorProfile,
+  );
+  const doctorId = created.body.doctor.id;
+  await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/hospital-doctors/${doctorId}/review`,
+    { status: 'approved' },
+  );
+  await auth(hospitalToken)(
+    'patch',
+    `/api/doctor-portal/organizations/doctors/${doctorId}/active`,
+    { isActive: true },
+  );
+  if (linkDoctor) {
+    await auth('doctor')(
+      'post',
+      '/api/doctor-portal/invitations/accept',
+      { doctorId },
+    );
+  }
+  return { organizationId, doctorId };
 }
 
 test.beforeEach(() => records.clear());
@@ -1015,4 +1109,365 @@ test('approved doctor invitations require a verified matching account and public
 test('an unaffiliated account cannot read another provider appointment records', async () => {
   const response = await auth('patient')('get', '/api/doctor-portal/appointments');
   assert.equal(response.status, 403);
+});
+
+test('hospital staff invitations grant organization-scoped operational appointment access only', async () => {
+  const first = await createApprovedHospitalDoctor();
+  const second = await createApprovedHospitalDoctor({
+    hospitalToken: 'other-hospital',
+    organizationName: 'South Hospital',
+    adminName: 'Admin Two',
+    doctorProfile: {
+      ...doctor(),
+      email: 'south-doctor@example.test',
+      medicalRegistrationNumber: 'MCI-SOUTH-1',
+    },
+    linkDoctor: false,
+  });
+  const firstBooking = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId: first.doctorId,
+    patientName: 'First Organization Patient',
+    patientGender: 'female',
+    patientAgeAtBooking: 40,
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  const secondBooking = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId: second.doctorId,
+    patientName: 'Second Organization Patient',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  const appointmentsPath = '/api/doctor-portal/appointments';
+  const invitePath = '/api/doctor-portal/organizations/staff/invitations';
+  assert.equal((await auth('staff')('post', invitePath, { email: 'staff@example.test' })).status, 403);
+  assert.equal((await auth('hospital')('post', invitePath, { email: 'invalid' })).status, 400);
+  const invited = await auth('hospital')('post', invitePath, { email: 'staff@example.test' });
+  assert.equal(invited.status, 201);
+  assert.equal(invited.body.staff.invitationStatus, 'pending');
+  assert.equal((await auth('hospital')('post', invitePath, { email: 'staff@example.test' })).status, 409);
+  assert.equal(
+    (await auth('unverified')(
+      'post',
+      '/api/doctor-portal/organizations/staff/invitations/accept',
+      { staffId: invited.body.staff.id },
+    )).status,
+    403,
+  );
+  assert.equal(
+    (await auth('other-staff')('post', '/api/doctor-portal/organizations/staff/invitations/accept', {
+      staffId: invited.body.staff.id,
+    })).status,
+    404,
+  );
+  const accepted = await auth('staff')(
+    'post',
+    '/api/doctor-portal/organizations/staff/invitations/accept',
+    { staffId: invited.body.staff.id },
+  );
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.staff.invitationStatus, 'active');
+  assert.equal(accepted.body.staff.isActive, true);
+
+  const staffList = await auth('hospital')('get', '/api/doctor-portal/organizations/staff');
+  assert.equal(staffList.status, 200);
+  assert.equal(staffList.body.staff.length, 1);
+  assert.equal(staffList.body.staff[0].email, 'staff@example.test');
+  assert.equal('firebaseUid' in staffList.body.staff[0], false);
+
+  const appointments = await auth('staff')('get', appointmentsPath);
+  assert.equal(appointments.status, 200);
+  assert.equal(appointments.body.total, 1);
+  assert.equal(appointments.body.appointments[0].patientName, 'First Organization Patient');
+  for (const privateField of ['patientGender', 'patientAgeAtBooking', 'patientFirebaseUid']) {
+    assert.equal(privateField in appointments.body.appointments[0], false);
+  }
+  assert.equal('changedBy' in appointments.body.appointments[0].statusHistory[0], false);
+  assert.equal(
+    (await auth('staff')('get', `${appointmentsPath}/${secondBooking.body.appointment.id}`)).status,
+    404,
+  );
+  assert.equal((await auth('staff')('get', '/api/doctor-portal/patients')).status, 403);
+  assert.equal(
+    (await auth('staff')(
+      'get',
+      `${appointmentsPath}/${firstBooking.body.appointment.id}/consultation`,
+    )).status,
+    403,
+  );
+  assert.equal(
+    (await auth('staff')(
+      'delete',
+      `/api/doctor-portal/organizations/staff/${invited.body.staff.id}`,
+    )).status,
+    403,
+  );
+
+  const confirmed = await auth('staff')(
+    'patch',
+    `${appointmentsPath}/${firstBooking.body.appointment.id}/status`,
+    { status: 'confirmed' },
+  );
+  assert.equal(confirmed.status, 200);
+  assert.equal(confirmed.body.appointment.status, 'confirmed');
+  assert.equal('patientAgeAtBooking' in confirmed.body.appointment, false);
+
+  const revoked = await auth('hospital')(
+    'delete',
+    `/api/doctor-portal/organizations/staff/${invited.body.staff.id}`,
+  );
+  assert.equal(revoked.status, 200);
+  assert.equal(revoked.body.staff.isActive, false);
+  assert.equal((await auth('staff')('get', appointmentsPath)).status, 403);
+  for (const action of [
+    'organization_staff_invited',
+    'organization_staff_invitation_accepted',
+    'organization_staff_deactivated',
+  ]) {
+    assert.ok(records.get('doctorPortalAuditLogs').some((entry) => entry.action === action));
+  }
+});
+
+test('consultations are upserted by appointment and only available to the treating doctor', async () => {
+  const { doctorId } = await createApprovedHospitalDoctor();
+  const colleagueCreated = await auth('hospital')(
+    'post',
+    '/api/doctor-portal/organizations/doctors',
+    {
+      ...doctor(),
+      fullName: 'Dr. Clinical Colleague',
+      email: 'clinical-colleague@example.test',
+      medicalRegistrationNumber: 'MCI-COLLEAGUE-1',
+    },
+  );
+  const colleagueId = colleagueCreated.body.doctor.id;
+  await auth('admin')(
+    'patch',
+    `/api/doctor-portal/admin/hospital-doctors/${colleagueId}/review`,
+    { status: 'approved' },
+  );
+  await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/organizations/doctors/${colleagueId}/active`,
+    { isActive: true },
+  );
+  await auth('clinical-colleague')(
+    'post',
+    '/api/doctor-portal/invitations/accept',
+    { doctorId: colleagueId },
+  );
+  const booked = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId,
+    patientName: 'Clinical Record Patient',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  const consultationPath = `/api/doctor-portal/appointments/${booked.body.appointment.id}/consultation`;
+  assert.equal((await auth('hospital')('get', consultationPath)).status, 403);
+  assert.equal((await auth('patient')('get', consultationPath)).status, 403);
+  assert.equal((await auth('clinical-colleague')('get', consultationPath)).status, 403);
+
+  const empty = await auth('doctor')('get', consultationPath);
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.consultation, null);
+  const saved = await auth('doctor')('put', consultationPath, {
+    diagnosis: 'Test diagnosis',
+    notes: 'Private clinical note.',
+    prescriptions: [{ medication: 'Medication A', dosage: '10 mg', frequency: 'daily' }],
+    followUpDate: '2027-12-01',
+    followUpReminderAt: '2026-11-19T09:00:00.000Z',
+    followUpInstructions: 'Return for review.',
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.consultation.diagnosis, 'Test diagnosis');
+  assert.equal(saved.body.consultation.followUpDate, '2027-12-01');
+  assert.equal((await auth('hospital')('get', consultationPath)).status, 403);
+  assert.equal((await auth('hospital')('put', consultationPath, { notes: 'Unauthorized change.' })).status, 403);
+  const patientFollowUpNotifications = await auth('android')('get', '/api/doctor-portal/notifications');
+  assert.equal(patientFollowUpNotifications.body.total, 2);
+  const followUpNotification = patientFollowUpNotifications.body.notifications.find(
+    ({ type }) => type === 'follow_up_reminder',
+  );
+  assert.ok(followUpNotification);
+  assert.equal(followUpNotification.body.includes('Test diagnosis'), false);
+
+  const access = await auth('doctor')(
+    'put',
+    `${consultationPath}/access`,
+    { doctorIds: [colleagueId] },
+  );
+  assert.equal(access.status, 200);
+  assert.deepEqual(access.body.authorizedDoctorIds, [colleagueId]);
+  const otherOrganizationDoctor = await createApprovedHospitalDoctor({
+    hospitalToken: 'other-hospital',
+    organizationName: 'South Clinical Center',
+    adminName: 'Admin Two',
+    doctorProfile: {
+      ...doctor(),
+      email: 'south-clinician@example.test',
+      medicalRegistrationNumber: 'MCI-SOUTH-CLINIC-1',
+    },
+    linkDoctor: false,
+  });
+  const crossOrganizationGrant = await auth('doctor')(
+    'put',
+    `${consultationPath}/access`,
+    { doctorIds: [otherOrganizationDoctor.doctorId] },
+  );
+  assert.equal(crossOrganizationGrant.status, 403);
+  const colleagueRead = await auth('clinical-colleague')('get', consultationPath);
+  assert.equal(colleagueRead.status, 200);
+  assert.equal(colleagueRead.body.consultation.diagnosis, 'Test diagnosis');
+  assert.equal(
+    (await auth('clinical-colleague')(
+      'put',
+      `${consultationPath}/access`,
+      { doctorIds: [] },
+    )).status,
+    403,
+  );
+  const updated = await auth('doctor')('put', consultationPath, { notes: 'Updated private note.' });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.consultation.notes, 'Updated private note.');
+  assert.equal(updated.body.consultation.diagnosis, 'Test diagnosis');
+  assert.equal(records.get('doctorPortalConsultations').length, 1);
+  const appointment = records.get('doctorPortalAppointments')[0];
+  assert.equal('diagnosis' in appointment, false);
+  assert.equal('consultation' in appointment, false);
+});
+
+test('appointment notifications are scoped to patient, doctor, and hospital recipients', async () => {
+  const { doctorId } = await createApprovedHospitalDoctor();
+  const booked = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId,
+    patientName: 'Notification Patient',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  assert.equal(booked.status, 201);
+  assert.equal(records.get('doctorPortalNotifications').length, 3);
+
+  const patientNotifications = await auth('android')('get', '/api/doctor-portal/notifications?unread=true');
+  const doctorNotifications = await auth('doctor')('get', '/api/doctor-portal/notifications');
+  const hospitalNotifications = await auth('hospital')('get', '/api/doctor-portal/notifications');
+  assert.equal(patientNotifications.body.total, 1);
+  assert.equal(doctorNotifications.body.total, 1);
+  assert.equal(hospitalNotifications.body.total, 1);
+  const patientNotification = patientNotifications.body.notifications[0];
+  const doctorNotification = doctorNotifications.body.notifications[0];
+  assert.equal(
+    (await auth('android')(
+      'patch',
+      `/api/doctor-portal/notifications/${doctorNotification.id}/read`,
+    )).status,
+    404,
+  );
+  const read = await auth('android')(
+    'patch',
+    `/api/doctor-portal/notifications/${patientNotification.id}/read`,
+  );
+  assert.equal(read.status, 200);
+  assert.ok(read.body.notification.readAt);
+  assert.equal(
+    (await auth('android')('get', '/api/doctor-portal/notifications?unread=true')).body.total,
+    0,
+  );
+
+  const confirmed = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/appointments/${booked.body.appointment.id}/status`,
+    { status: 'confirmed' },
+  );
+  assert.equal(confirmed.status, 200);
+  assert.equal(records.get('doctorPortalNotifications').length, 6);
+  assert.equal((await auth('doctor')('get', '/api/doctor-portal/notifications')).body.total, 2);
+  assert.equal((await auth('patient')('get', '/api/doctor-portal/notifications')).body.total, 0);
+});
+
+test('calendar reads scoped bookings and doctor date overrides govern Android booking', async () => {
+  const { doctorId } = await createApprovedHospitalDoctor();
+  const availabilityPath = '/api/doctor-portal/availability';
+  const overridePath = `${availabilityPath}/overrides`;
+  const date = '2027-11-02';
+  const override = {
+    isAvailable: true,
+    openingTime: '09:00',
+    closingTime: '11:00',
+    breaks: [{ startTime: '10:00', endTime: '10:30' }],
+    reason: 'Extra clinic hours.',
+  };
+  assert.equal(
+    (await auth('hospital')('put', `${overridePath}/${date}`, override)).status,
+    403,
+  );
+  const set = await auth('doctor')('put', `${overridePath}/${date}`, override);
+  assert.equal(set.status, 200);
+  assert.equal(
+    (await auth('doctor')('put', `${overridePath}/2027-02-30`, { isAvailable: false })).status,
+    400,
+  );
+
+  const calendar = await auth('hospital')(
+    'get',
+    `${availabilityPath}?doctorId=${doctorId}&from=${date}&to=${date}`,
+  );
+  assert.equal(calendar.status, 200);
+  assert.equal(calendar.body.overrides[0].date, date);
+  assert.equal('reason' in calendar.body.overrides[0], false);
+  assert.deepEqual(calendar.body.appointments, []);
+
+  const bookable = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId,
+    patientName: 'Calendar Patient',
+    appointmentDate: date,
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  assert.equal(bookable.status, 201);
+  const calendarWithBooking = await auth('hospital')(
+    'get',
+    `${availabilityPath}?doctorId=${doctorId}&from=${date}&to=${date}`,
+  );
+  assert.equal(calendarWithBooking.body.appointments.length, 1);
+  assert.equal(calendarWithBooking.body.appointments[0].patientName, 'Calendar Patient');
+
+  const closureDate = '2027-11-03';
+  const closure = await auth('doctor')(
+    'put',
+    `${overridePath}/${closureDate}`,
+    { isAvailable: false, reason: 'Clinic closed.' },
+  );
+  assert.equal(closure.status, 200);
+  const closedBooking = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId,
+    patientName: 'Closed Date Patient',
+    appointmentDate: closureDate,
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  assert.equal(closedBooking.status, 409);
+  assert.equal(closedBooking.body.code, 'DOCTOR_UNAVAILABLE');
+
+  const removed = await auth('doctor')('delete', `${overridePath}/${date}`);
+  assert.equal(removed.status, 200);
+  const restored = await auth('android')('post', '/api/doctor-portal/appointments/book', {
+    doctorId,
+    patientName: 'Restored Schedule Patient',
+    appointmentDate: date,
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    patientConsent: true,
+  });
+  assert.equal(restored.status, 409);
+  assert.equal(restored.body.code, 'DOCTOR_UNAVAILABLE');
 });

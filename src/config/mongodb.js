@@ -16,8 +16,11 @@ const requiredCollections = [
   'doctorApplications',
   'doctorPortalOrganizations',
   'doctorPortalDoctors',
+  'doctorPortalStaff',
   'doctorPortalDepartments',
   'doctorPortalAppointments',
+  'doctorPortalConsultations',
+  'doctorPortalNotifications',
   'doctorPortalDailyCapacity',
   'doctorPortalAuditLogs',
 ];
@@ -96,6 +99,10 @@ const requiredIndexes = {
     { assignedFirebaseProjectId: 1, assignedFirebaseUid: 1 },
     { verificationStatus: 1, organizationId: 1 },
   ],
+  doctorPortalStaff: [
+    { organizationId: 1, emailSearch: 1 },
+    { firebaseProjectId: 1, firebaseUid: 1, isActive: 1 },
+  ],
   doctorPortalDepartments: [
     { organizationId: 1, nameSearch: 1 },
     { organizationId: 1, isActive: 1 },
@@ -105,6 +112,14 @@ const requiredIndexes = {
     { organizationId: 1, appointmentDate: 1, status: 1 },
     { doctorId: 1, appointmentDate: 1, status: 1 },
     { patientFirebaseProjectId: 1, patientFirebaseUid: 1, createdAt: -1 },
+  ],
+  doctorPortalConsultations: [
+    { appointmentId: 1 },
+    { doctorId: 1, updatedAt: -1 },
+  ],
+  doctorPortalNotifications: [
+    { eventKey: 1 },
+    { recipientFirebaseProjectId: 1, recipientFirebaseUid: 1, createdAt: -1 },
   ],
   doctorPortalDailyCapacity: [
     { doctorId: 1, appointmentDate: 1 },
@@ -163,9 +178,13 @@ async function ensureIndexes(database) {
           && keys.adminFirebaseProjectId && keys.adminFirebaseUid)
         || (collectionName === 'doctorPortalDepartments'
           && keys.organizationId && keys.nameSearch)
+        || (collectionName === 'doctorPortalStaff'
+          && keys.organizationId && keys.emailSearch)
         || (collectionName === 'doctorPortalDoctors'
           && keys.assignedFirebaseProjectId && keys.assignedFirebaseUid)
         || (collectionName === 'doctorPortalAppointments' && keys.doctorId && keys.slotKeys)
+        || (collectionName === 'doctorPortalConsultations' && keys.appointmentId)
+        || (collectionName === 'doctorPortalNotifications' && keys.eventKey)
         ? { unique: true }
         : {}),
     }))

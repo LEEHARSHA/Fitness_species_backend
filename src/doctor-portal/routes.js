@@ -33,10 +33,22 @@ export function createDoctorPortalRoutes(dependencies) {
 
   router.post('/appointments/book', bookingAuthenticate, controllers.bookAppointment);
   router.post('/invitations/accept', authenticate, controllers.acceptDoctorInvitation);
+  router.get('/organizations/staff', authenticate, controllers.listOrganizationStaff);
+  router.post('/organizations/staff/invitations', authenticate, controllers.inviteOrganizationStaff);
+  router.post('/organizations/staff/invitations/accept', authenticate, controllers.acceptOrganizationStaffInvitation);
+  router.delete('/organizations/staff/:staffId', authenticate, controllers.deactivateOrganizationStaff);
   router.get('/patients', authenticate, controllers.listPatients);
   router.get('/patients/:patientId/visits', authenticate, controllers.listPatientVisits);
+  router.get('/availability', authenticate, controllers.getAvailabilityCalendar);
+  router.put('/availability/overrides/:date', authenticate, controllers.setAvailabilityOverride);
+  router.delete('/availability/overrides/:date', authenticate, controllers.removeAvailabilityOverride);
+  router.get('/notifications', bookingAuthenticate, controllers.listNotifications);
+  router.patch('/notifications/:notificationId/read', bookingAuthenticate, controllers.markNotificationRead);
   router.get('/appointments/summary', authenticate, controllers.getAppointmentSummary);
   router.get('/appointments', authenticate, controllers.listAppointments);
+  router.get('/appointments/:appointmentId/consultation', authenticate, controllers.getConsultationRecord);
+  router.put('/appointments/:appointmentId/consultation', authenticate, controllers.saveConsultationRecord);
+  router.put('/appointments/:appointmentId/consultation/access', authenticate, controllers.setConsultationAccess);
   router.get('/appointments/:appointmentId', authenticate, controllers.getAppointment);
   router.patch('/appointments/:appointmentId/status', authenticate, controllers.updateAppointmentStatus);
   router.patch('/appointments/:appointmentId/reschedule', authenticate, controllers.rescheduleAppointment);

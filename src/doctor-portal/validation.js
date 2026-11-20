@@ -201,6 +201,93 @@ export const patientVisitsQuerySchema = z.object({
   message: 'The end date must not precede the start date.',
 });
 
+export const staffInvitationSchema = z.object({
+  email: z.string().trim().email().max(254),
+}).strict();
+export const staffInvitationAcceptSchema = z.object({
+  staffId: objectId,
+}).strict();
+export const consultationSchema = z.object({
+  diagnosis: optionalText(4000),
+  notes: optionalText(10000),
+  prescriptions: z.array(z.object({
+    medication: text(1, 200),
+    dosage: optionalText(120),
+    frequency: optionalText(120),
+    duration: optionalText(120),
+    instructions: optionalText(1000),
+  }).strict()).max(50).optional(),
+  followUpDate: z.string().date().nullable().optional(),
+  followUpReminderAt: z.string().datetime().nullable().optional(),
+  followUpInstructions: optionalText(1000),
+}).strict().superRefine((record, context) => {
+  if (Object.keys(record).length === 0) {
+    context.addIssue({ code: 'custom', message: 'At least one consultation field is required.' });
+  }
+  if (record.followUpReminderAt && !record.followUpDate) {
+    context.addIssue({
+      code: 'custom',
+      path: ['followUpDate'],
+      message: 'A follow-up date is required when a reminder is set.',
+    });
+  }
+});
+export const consultationAccessSchema = z.object({
+  doctorIds: z.array(objectId).max(20),
+}).strict().refine(
+  ({ doctorIds }) => new Set(doctorIds.map((id) => id.toLowerCase())).size === doctorIds.length,
+  'Doctor access entries must be unique.',
+);
+export const notificationQuerySchema = z.object({
+  unread: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict();
+export const availabilityQuerySchema = z.object({
+  doctorId: objectId.optional(),
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+}).strict().refine((query) => !query.from || !query.to || query.from <= query.to, {
+  path: ['to'],
+  message: 'The end date must not precede the start date.',
+});
+export const availabilityOverrideSchema = z.object({
+  isAvailable: z.boolean(),
+  openingTime: time.optional(),
+  closingTime: time.optional(),
+  breaks: z.array(breakSchema).max(8).optional(),
+  reason: optionalText(500),
+}).strict().superRefine((override, context) => {
+  if (Boolean(override.openingTime) !== Boolean(override.closingTime)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['closingTime'],
+      message: 'Both opening and closing times are required for an availability override.',
+    });
+  }
+  if (override.openingTime && override.closingTime && override.closingTime <= override.openingTime) {
+    context.addIssue({
+      code: 'custom',
+      path: ['closingTime'],
+      message: 'Closing time must be later than opening time.',
+    });
+  }
+  for (const [index, item] of (override.breaks || []).entries()) {
+    if (
+      item.endTime <= item.startTime
+      || (override.openingTime && item.startTime < override.openingTime)
+      || (override.closingTime && item.endTime > override.closingTime)
+      || (index > 0 && item.startTime < override.breaks[index - 1].endTime)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['breaks', index],
+        message: 'Breaks must be ordered and fall within the override hours.',
+      });
+    }
+  }
+});
+
 export const appointmentSummaryQuerySchema = z.object({
   from: z.string().date().optional(),
   to: z.string().date().optional(),
