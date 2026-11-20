@@ -172,6 +172,46 @@ export const appointmentQuerySchema = z.object({
   message: 'The end date must not precede the start date.',
 });
 
+export const patientDirectoryQuerySchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  doctorId: objectId.optional(),
+  departmentId: objectId.optional(),
+  status: z.enum(['requested', 'confirmed', 'completed', 'cancelled', 'no_show']).optional(),
+  appointmentType: z.enum(['online', 'in_person']).optional(),
+  search: z.string().trim().max(120).optional(),
+  sortBy: z.enum(['lastAppointment', 'name']).default('lastAppointment'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict().refine((query) => !query.from || !query.to || query.from <= query.to, {
+  path: ['to'],
+  message: 'The end date must not precede the start date.',
+});
+
+export const patientVisitsQuerySchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  status: z.enum(['requested', 'confirmed', 'completed', 'cancelled', 'no_show']).optional(),
+  appointmentType: z.enum(['online', 'in_person']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict().refine((query) => !query.from || !query.to || query.from <= query.to, {
+  path: ['to'],
+  message: 'The end date must not precede the start date.',
+});
+
+export const appointmentSummaryQuerySchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  today: z.string().date().optional(),
+  doctorId: objectId.optional(),
+  departmentId: objectId.optional(),
+}).strict().refine((query) => !query.from || !query.to || query.from <= query.to, {
+  path: ['to'],
+  message: 'The end date must not precede the start date.',
+});
+
 export const appointmentStatusSchema = z.object({
   status: z.enum(['confirmed', 'completed', 'cancelled', 'no_show']),
   reason: optionalText(500),

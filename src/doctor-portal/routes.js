@@ -33,6 +33,9 @@ export function createDoctorPortalRoutes(dependencies) {
 
   router.post('/appointments/book', bookingAuthenticate, controllers.bookAppointment);
   router.post('/invitations/accept', authenticate, controllers.acceptDoctorInvitation);
+  router.get('/patients', authenticate, controllers.listPatients);
+  router.get('/patients/:patientId/visits', authenticate, controllers.listPatientVisits);
+  router.get('/appointments/summary', authenticate, controllers.getAppointmentSummary);
   router.get('/appointments', authenticate, controllers.listAppointments);
   router.get('/appointments/:appointmentId', authenticate, controllers.getAppointment);
   router.patch('/appointments/:appointmentId/status', authenticate, controllers.updateAppointmentStatus);

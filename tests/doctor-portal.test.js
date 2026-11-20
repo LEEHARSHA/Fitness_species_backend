@@ -160,6 +160,121 @@ class TestCollection {
     const status = pipeline[0]?.$match?.status;
     const union = pipeline.find((stage) => stage.$unionWith)?.$unionWith;
     const facet = pipeline.find((stage) => stage.$facet)?.$facet;
+    if (!union && facet?.totals) {
+      const baseFilter = pipeline.find((stage) => stage.$match)?.$match || {};
+      const documents = this.items().filter((document) => matches(document, baseFilter));
+      const filterFor = (stages) => {
+        const filter = stages.find((stage) => stage.$match)?.$match || {};
+        return documents.filter((document) => matches(document, filter));
+      };
+      const rangeAppointments = filterFor(facet.totals);
+      const groupBy = (items, keyOf) => {
+        const groups = new Map();
+        for (const item of items) {
+          const key = keyOf(item);
+          groups.set(key, [...(groups.get(key) || []), item]);
+        }
+        return groups;
+      };
+      const statusCounts = [...groupBy(rangeAppointments, (item) => item.status)]
+        .map(([statusName, items]) => ({ _id: statusName, count: items.length }));
+      const doctorStats = [...groupBy(rangeAppointments, (item) => item.doctorId)]
+        .map(([doctorId, items]) => ({
+          _id: doctorId,
+          doctorName: items[0].doctorName,
+          departmentId: items[0].departmentId,
+          count: items.length,
+        }));
+      const monthStats = [...groupBy(rangeAppointments, (item) => item.appointmentDate?.slice(0, 7))]
+        .map(([month, items]) => ({ _id: month, count: items.length }));
+      const departmentStats = [...groupBy(rangeAppointments, (item) => item.departmentId?.toString() || null)]
+        .map(([departmentId, items]) => ({
+          _id: departmentId ? new ObjectId(departmentId) : null,
+          count: items.length,
+        }));
+      const uniquePatients = new Set(rangeAppointments.map((item) => (
+        item.patientFirebaseProjectId && item.patientFirebaseUid
+          ? `${item.patientFirebaseProjectId}:${item.patientFirebaseUid}`
+          : item._id.toString()
+      )));
+      const todayCount = filterFor(facet.today).length;
+      const upcomingCount = filterFor(facet.upcoming).length;
+      return {
+        async toArray() {
+          return [{
+            totals: rangeAppointments.length ? [{ appointments: rangeAppointments.length }] : [],
+            patients: uniquePatients.size ? [{ count: uniquePatients.size }] : [],
+            statuses: statusCounts,
+            doctors: doctorStats,
+            months: monthStats,
+            departments: departmentStats,
+            today: todayCount ? [{ count: todayCount }] : [],
+            upcoming: upcomingCount ? [{ count: upcomingCount }] : [],
+          }];
+        },
+      };
+    }
+    if (!union && facet?.patients) {
+      const filter = pipeline.find((stage) => stage.$match)?.$match || {};
+      const appointments = this.items().filter((document) => matches(document, filter));
+      const groups = new Map();
+      for (const appointment of appointments) {
+        const identity = appointment.patientFirebaseProjectId && appointment.patientFirebaseUid
+          ? `${appointment.patientFirebaseProjectId}:${appointment.patientFirebaseUid}`
+          : appointment._id.toString();
+        groups.set(identity, [...(groups.get(identity) || []), appointment]);
+      }
+      const patients = [...groups.values()].map((items) => {
+        const sorted = [...items].sort((left, right) => (
+          left.appointmentDate.localeCompare(right.appointmentDate)
+          || left.appointmentTime.localeCompare(right.appointmentTime)
+          || left.createdAt - right.createdAt
+        ));
+        const first = sorted[0];
+        const latest = sorted[sorted.length - 1];
+        return {
+          patientId: first._id,
+          patientName: latest.patientName,
+          patientGender: latest.patientGender,
+          patientAgeAtBooking: latest.patientAgeAtBooking,
+          createdAt: first.createdAt,
+          latestAppointmentDate: latest.appointmentDate,
+          latestAppointmentTime: latest.appointmentTime,
+          latestAppointmentId: latest.appointmentId,
+          latestStatus: latest.status,
+          doctorId: latest.doctorId,
+          doctorName: latest.doctorName,
+          doctorSpecialization: latest.doctorSpecialization,
+          departmentId: latest.departmentId,
+          visitCount: items.length,
+        };
+      });
+      const patientFacet = facet.patients;
+      const sortStage = patientFacet.find((stage) => stage.$sort)?.$sort || { latestAppointmentDate: -1 };
+      const [sortKey, sortOrder] = Object.entries(sortStage)[0];
+      patients.sort((left, right) => {
+        const leftValue = left[sortKey] || '';
+        const rightValue = right[sortKey] || '';
+        return (leftValue > rightValue ? 1 : leftValue < rightValue ? -1 : 0) * sortOrder;
+      });
+      const offset = patientFacet.find((stage) => stage.$skip)?.$skip || 0;
+      const limit = patientFacet.find((stage) => stage.$limit)?.$limit || 25;
+      const departments = records.get('doctorPortalDepartments') || [];
+      const page = patients.slice(offset, offset + limit).map((patient) => ({
+        ...patient,
+        patientId: patient.patientId.toString(),
+        departmentId: patient.departmentId?.toString() || null,
+        departmentName: departments.find((department) => same(department._id, patient.departmentId))?.name,
+      }));
+      return {
+        async toArray() {
+          return [{
+            patients: page,
+            total: patients.length ? [{ count: patients.length }] : [],
+          }];
+        },
+      };
+    }
     assert.ok(status, 'Admin queue must filter the individual application status.');
     assert.equal(union?.coll, 'doctorPortalDoctors', 'Admin queue must include hospital doctor records.');
     assert.equal(union.pipeline[0]?.$match?.verificationStatus, status);
@@ -754,6 +869,23 @@ test('portal booking reserves overlapping slots atomically and hospital appointm
 
   const listed = await auth('hospital')('get', '/api/doctor-portal/appointments');
   assert.equal(listed.body.total, 3);
+  const patientList = await auth('hospital')('get', '/api/doctor-portal/patients');
+  assert.equal(patientList.status, 200);
+  assert.equal(patientList.body.total, 1);
+  assert.equal(patientList.body.patients[0].visitCount, 3);
+  assert.match(patientList.body.patients[0].patientIdentifier, /^PT-/);
+  assert.equal('patientFirebaseUid' in patientList.body.patients[0], false);
+  const visitHistory = await auth('hospital')('get', `/api/doctor-portal/patients/${patientList.body.patients[0].patientId}/visits`);
+  assert.equal(visitHistory.status, 200);
+  assert.equal(visitHistory.body.total, 3);
+  assert.equal('patientFirebaseUid' in visitHistory.body.appointments[0], false);
+  const summary = await auth('hospital')('get', `/api/doctor-portal/appointments/summary?doctorId=${doctorId}&today=${booking.appointmentDate}`);
+  assert.equal(summary.status, 200);
+  assert.equal(summary.body.summary.totalAppointments, 3);
+  assert.equal(summary.body.summary.totalPatients, 1);
+  assert.equal(summary.body.summary.todayAppointments, 2);
+  assert.equal(summary.body.summary.byStatus.cancelled, 1);
+  assert.equal(summary.body.summary.doctorStats[0].doctorId, doctorId);
   const changed = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/status`, { status: 'confirmed' });
   assert.equal(changed.body.appointment.status, 'confirmed');
   const rescheduled = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/reschedule`, {
@@ -763,10 +895,88 @@ test('portal booking reserves overlapping slots atomically and hospital appointm
   assert.equal(rescheduled.status, 200);
   assert.equal(rescheduled.body.appointment.appointmentTime, '12:00');
   assert.equal(rescheduled.body.appointment.rescheduleHistory.length, 1);
+  const conflictingReschedule = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/reschedule`, {
+    appointmentDate: booking.appointmentDate,
+    appointmentTime: '11:00',
+  });
+  assert.equal(conflictingReschedule.status, 409);
+  const completed = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/status`, { status: 'completed' });
+  assert.equal(completed.status, 200);
+  const invalidTransition = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/status`, {
+    status: 'cancelled',
+    reason: 'Too late to cancel',
+  });
+  assert.equal(invalidTransition.status, 409);
 
   await auth('other-hospital')('post', '/api/doctor-portal/organizations', organization('South Hospital', 'Admin Two'));
   const isolated = await auth('other-hospital')('get', '/api/doctor-portal/appointments');
   assert.equal(isolated.body.total, 0);
+  const isolatedPatients = await auth('other-hospital')('get', '/api/doctor-portal/patients');
+  assert.equal(isolatedPatients.body.total, 0);
+  const privateVisitHistory = await auth('other-hospital')('get', `/api/doctor-portal/patients/${patientList.body.patients[0].patientId}/visits`);
+  assert.equal(privateVisitHistory.status, 404);
+});
+
+test('individual doctors only see their own appointment and patient records', async () => {
+  const ownDoctorId = new ObjectId();
+  const otherDoctorId = new ObjectId();
+  records.set('doctorApplications', [{
+    _id: ownDoctorId,
+    firebaseProjectId: primaryProjectId,
+    firebaseUid: 'doctor',
+    status: 'approved',
+  }]);
+  const appointments = new TestCollection('doctorPortalAppointments');
+  const ownAppointment = await appointments.insertOne({
+    appointmentId: new ObjectId().toString(),
+    doctorId: ownDoctorId.toString(),
+    doctorName: 'Dr. Own Practice',
+    doctorSpecialization: 'Cardiology',
+    organizationId: null,
+    organizationName: 'Own Practice',
+    patientName: 'Own Patient',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '09:00',
+    appointmentType: 'in_person',
+    status: 'confirmed',
+    patientFirebaseProjectId: primaryProjectId,
+    patientFirebaseUid: 'patient',
+    createdAt: new Date('2027-01-01T10:00:00Z'),
+    slotKeys: [],
+  });
+  const otherAppointment = await appointments.insertOne({
+    appointmentId: new ObjectId().toString(),
+    doctorId: otherDoctorId.toString(),
+    doctorName: 'Dr. Other Practice',
+    doctorSpecialization: 'Dermatology',
+    organizationId: null,
+    organizationName: 'Other Practice',
+    patientName: 'Other Patient',
+    appointmentDate: '2027-11-01',
+    appointmentTime: '10:00',
+    appointmentType: 'in_person',
+    status: 'confirmed',
+    patientFirebaseProjectId: primaryProjectId,
+    patientFirebaseUid: 'other-patient',
+    createdAt: new Date('2027-01-02T10:00:00Z'),
+    slotKeys: [],
+  });
+
+  const appointmentList = await auth('doctor')('get', '/api/doctor-portal/appointments');
+  assert.equal(appointmentList.status, 200);
+  assert.equal(appointmentList.body.total, 1);
+  assert.equal(appointmentList.body.appointments[0].doctorId, ownDoctorId.toString());
+  const patientList = await auth('doctor')('get', '/api/doctor-portal/patients');
+  assert.equal(patientList.status, 200);
+  assert.equal(patientList.body.total, 1);
+  assert.equal(patientList.body.patients[0].patientName, 'Own Patient');
+  const ownVisits = await auth('doctor')('get', `/api/doctor-portal/patients/${ownAppointment.insertedId}/visits`);
+  assert.equal(ownVisits.status, 200);
+  const otherVisits = await auth('doctor')('get', `/api/doctor-portal/patients/${otherAppointment.insertedId}/visits`);
+  assert.equal(otherVisits.status, 404);
+  const summary = await auth('doctor')('get', '/api/doctor-portal/appointments/summary');
+  assert.equal(summary.body.summary.totalAppointments, 1);
+  assert.equal(summary.body.summary.totalPatients, 1);
 });
 
 test('approved doctor invitations require a verified matching account and public discovery redacts private fields', async () => {

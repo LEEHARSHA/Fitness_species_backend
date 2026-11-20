@@ -3,6 +3,7 @@ import {
   appointmentBookingSchema,
   appointmentQuerySchema,
   appointmentRescheduleSchema,
+  appointmentSummaryQuerySchema,
   appointmentStatusSchema,
   adminOrganizationDoctorsQuerySchema,
   departmentSchema,
@@ -15,6 +16,8 @@ import {
   organizationAdminQuerySchema,
   organizationSchema,
   organizationUpdateSchema,
+  patientDirectoryQuerySchema,
+  patientVisitsQuerySchema,
   publicDoctorQuerySchema,
   verificationSchema,
 } from './validation.js';
@@ -1000,7 +1003,8 @@ export function createDoctorPortalControllers({ getDb }) {
     if (query.appointmentType) filter.appointmentType = query.appointmentType;
     if (query.departmentId) filter.departmentId = idOf(query.departmentId);
     if (query.search) {
-      const escaped = query.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const search = query.search.replace(/^PT-/i, '');
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.$or = [
         { patientName: { $regex: escaped, $options: 'i' } },
         { doctorName: { $regex: escaped, $options: 'i' } },
@@ -1023,6 +1027,296 @@ export function createDoctorPortalControllers({ getDb }) {
         status: query.status || null,
       },
     });
+    res.json({ success: true, appointments: items.map(clean), total, page: query.page, limit: query.limit });
+  });
+
+  const getAppointmentSummary = asyncRoute(async (req, res) => {
+    const parsed = appointmentSummaryQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const query = parsed.data;
+    const scope = await appointmentScope(req.user, query);
+    if (!scope) {
+      res.status(403).json({ success: false, message: 'This account has no authorized doctor or hospital appointment access.' });
+      return;
+    }
+
+    const today = query.today || new Date().toISOString().slice(0, 10);
+    const dateFilter = {
+      ...(query.from || query.to ? {
+        appointmentDate: {
+          ...(query.from ? { $gte: query.from } : {}),
+          ...(query.to ? { $lte: query.to } : {}),
+        },
+      } : {}),
+      ...(query.departmentId ? { departmentId: idOf(query.departmentId) } : {}),
+    };
+    const activeStatusFilter = { status: { $in: ['requested', 'confirmed'] } };
+    const [facets = {}] = await collection('doctorPortalAppointments').aggregate([
+      { $match: scope },
+      {
+        $facet: {
+          totals: [
+            { $match: dateFilter },
+            { $count: 'appointments' },
+          ],
+          patients: [
+            { $match: dateFilter },
+            {
+              $group: {
+                _id: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ['$patientFirebaseProjectId', null] },
+                        { $ne: ['$patientFirebaseUid', null] },
+                      ],
+                    },
+                    { projectId: '$patientFirebaseProjectId', uid: '$patientFirebaseUid' },
+                    { appointmentId: '$_id' },
+                  ],
+                },
+              },
+            },
+            { $count: 'count' },
+          ],
+          statuses: [
+            { $match: dateFilter },
+            { $group: { _id: '$status', count: { $sum: 1 } } },
+          ],
+          doctors: [
+            { $match: dateFilter },
+            {
+              $group: {
+                _id: '$doctorId',
+                doctorName: { $first: '$doctorName' },
+                departmentId: { $first: '$departmentId' },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1, doctorName: 1 } },
+          ],
+          months: [
+            { $match: dateFilter },
+            {
+              $group: {
+                _id: { $substrBytes: ['$appointmentDate', 0, 7] },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+          departments: [
+            { $match: dateFilter },
+            {
+              $group: {
+                _id: '$departmentId',
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+          ],
+          today: [
+            { $match: { appointmentDate: today, ...activeStatusFilter, ...(dateFilter.departmentId ? { departmentId: dateFilter.departmentId } : {}) } },
+            { $count: 'count' },
+          ],
+          upcoming: [
+            { $match: { appointmentDate: { $gte: today }, ...activeStatusFilter, ...(dateFilter.departmentId ? { departmentId: dateFilter.departmentId } : {}) } },
+            { $count: 'count' },
+          ],
+        },
+      },
+    ]).toArray();
+    const statuses = Object.fromEntries(
+      ['requested', 'confirmed', 'completed', 'cancelled', 'no_show'].map((status) => [status, 0]),
+    );
+    for (const item of facets.statuses || []) statuses[item._id] = item.count;
+    const summary = {
+      totalAppointments: facets.totals?.[0]?.appointments || 0,
+      totalPatients: facets.patients?.[0]?.count || 0,
+      todayAppointments: facets.today?.[0]?.count || 0,
+      upcomingAppointments: facets.upcoming?.[0]?.count || 0,
+      byStatus: statuses,
+      doctorStats: (facets.doctors || []).map((item) => ({
+        doctorId: item._id,
+        doctorName: item.doctorName,
+        departmentId: item.departmentId?.toString() || null,
+        appointments: item.count,
+      })),
+      monthlyTrends: (facets.months || []).map((item) => ({ month: item._id, appointments: item.count })),
+      departmentStats: (facets.departments || []).map((item) => ({
+        departmentId: item._id?.toString() || null,
+        appointments: item.count,
+      })),
+    };
+    await audit(req.user, 'appointment_summary_viewed', scope.organizationId || scope.doctorId, {
+      filters: { from: query.from || null, to: query.to || null, doctorId: query.doctorId || null },
+    });
+    res.json({ success: true, summary });
+  });
+
+  const listPatients = asyncRoute(async (req, res) => {
+    const parsed = patientDirectoryQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const query = parsed.data;
+    const scope = await appointmentScope(req.user, query);
+    if (!scope) {
+      res.status(403).json({ success: false, message: 'This account has no authorized doctor or hospital patient access.' });
+      return;
+    }
+    const filter = { ...scope };
+    if (query.from || query.to) {
+      filter.appointmentDate = {
+        ...(query.from ? { $gte: query.from } : {}),
+        ...(query.to ? { $lte: query.to } : {}),
+      };
+    }
+    if (query.status) filter.status = query.status;
+    if (query.appointmentType) filter.appointmentType = query.appointmentType;
+    if (query.departmentId) filter.departmentId = idOf(query.departmentId);
+    if (query.search) {
+      const search = query.search.replace(/^PT-/i, '');
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { patientName: { $regex: escaped, $options: 'i' } },
+        { doctorName: { $regex: escaped, $options: 'i' } },
+        { appointmentId: { $regex: escaped, $options: 'i' } },
+      ];
+    }
+    const direction = query.sortOrder === 'asc' ? 1 : -1;
+    const patientSort = query.sortBy === 'name'
+      ? { patientName: direction, patientId: 1 }
+      : { latestAppointmentDate: direction, latestAppointmentTime: direction };
+    const [result = {}] = await collection('doctorPortalAppointments').aggregate([
+      { $match: filter },
+      { $sort: { appointmentDate: 1, appointmentTime: 1, createdAt: 1, _id: 1 } },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              {
+                $and: [
+                  { $ne: ['$patientFirebaseProjectId', null] },
+                  { $ne: ['$patientFirebaseUid', null] },
+                ],
+              },
+              { projectId: '$patientFirebaseProjectId', uid: '$patientFirebaseUid' },
+              { appointmentId: '$_id' },
+            ],
+          },
+          patientId: { $min: '$_id' },
+          patientName: { $last: '$patientName' },
+          patientGender: { $last: '$patientGender' },
+          patientAgeAtBooking: { $last: '$patientAgeAtBooking' },
+          createdAt: { $min: '$createdAt' },
+          latestAppointmentDate: { $last: '$appointmentDate' },
+          latestAppointmentTime: { $last: '$appointmentTime' },
+          latestAppointmentId: { $last: '$appointmentId' },
+          latestStatus: { $last: '$status' },
+          doctorId: { $last: '$doctorId' },
+          doctorName: { $last: '$doctorName' },
+          doctorSpecialization: { $last: '$doctorSpecialization' },
+          departmentId: { $last: '$departmentId' },
+          visitCount: { $sum: 1 },
+        },
+      },
+      {
+        $facet: {
+          patients: [
+            { $sort: patientSort },
+            { $skip: (query.page - 1) * query.limit },
+            { $limit: query.limit },
+            {
+              $lookup: {
+                from: 'doctorPortalDepartments',
+                localField: 'departmentId',
+                foreignField: '_id',
+                as: 'department',
+              },
+            },
+            { $addFields: { departmentName: { $arrayElemAt: ['$department.name', 0] } } },
+            {
+              $project: {
+                _id: 0,
+                patientId: { $toString: '$patientId' },
+                patientName: 1,
+                patientGender: 1,
+                patientAgeAtBooking: 1,
+                createdAt: 1,
+                latestAppointmentDate: 1,
+                latestAppointmentTime: 1,
+                latestAppointmentId: 1,
+                latestStatus: 1,
+                doctorId: 1,
+                doctorName: 1,
+                doctorSpecialization: 1,
+                departmentId: { $toString: '$departmentId' },
+                departmentName: 1,
+                visitCount: 1,
+              },
+            },
+          ],
+          total: [{ $count: 'count' }],
+        },
+      },
+    ]).toArray();
+    const patients = (result.patients || []).map((patient) => ({
+      ...patient,
+      patientIdentifier: `PT-${patient.patientId.toUpperCase()}`,
+      departmentId: patient.departmentId === 'null' ? null : patient.departmentId,
+    }));
+    await audit(req.user, 'patients_viewed', scope.organizationId || scope.doctorId, {
+      resultCount: patients.length,
+      filters: { from: query.from || null, to: query.to || null, status: query.status || null },
+    });
+    res.json({
+      success: true,
+      patients,
+      total: result.total?.[0]?.count || 0,
+      page: query.page,
+      limit: query.limit,
+    });
+  });
+
+  const listPatientVisits = asyncRoute(async (req, res) => {
+    if (!hasId(req.params.patientId)) {
+      res.status(400).json({ success: false, message: 'Invalid patient reference.' });
+      return;
+    }
+    const parsed = patientVisitsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const query = parsed.data;
+    const scope = await appointmentScope(req.user);
+    if (!scope) {
+      res.status(403).json({ success: false, message: 'Patient visit access is not authorized.' });
+      return;
+    }
+    const appointments = collection('doctorPortalAppointments');
+    const anchor = await appointments.findOne({ _id: idOf(req.params.patientId), ...scope });
+    if (!anchor) {
+      res.status(404).json({ success: false, message: 'Patient record was not found.' });
+      return;
+    }
+    const identityFilter = anchor.patientFirebaseUid && anchor.patientFirebaseProjectId
+      ? {
+        patientFirebaseUid: anchor.patientFirebaseUid,
+        patientFirebaseProjectId: anchor.patientFirebaseProjectId,
+      }
+      : { _id: anchor._id };
+    const filter = { ...scope, ...identityFilter };
+    if (query.from || query.to) {
+      filter.appointmentDate = {
+        ...(query.from ? { $gte: query.from } : {}),
+        ...(query.to ? { $lte: query.to } : {}),
+      };
+    }
+    if (query.status) filter.status = query.status;
+    if (query.appointmentType) filter.appointmentType = query.appointmentType;
+    const [items, total] = await Promise.all([
+      appointments.find(filter).sort({ appointmentDate: -1, appointmentTime: -1 })
+        .skip((query.page - 1) * query.limit).limit(query.limit).toArray(),
+      appointments.countDocuments(filter),
+    ]);
+    await audit(req.user, 'patient_visits_viewed', anchor._id, { resultCount: items.length });
     res.json({ success: true, appointments: items.map(clean), total, page: query.page, limit: query.limit });
   });
 
@@ -1226,6 +1520,9 @@ export function createDoctorPortalControllers({ getDb }) {
     acceptDoctorInvitation,
     bookAppointment,
     listAppointments,
+    getAppointmentSummary,
+    listPatients,
+    listPatientVisits,
     getAppointment,
     updateAppointmentStatus,
     rescheduleAppointment,
