@@ -562,3 +562,29 @@ test('public directory combines eligible individual and hospital doctors without
     2,
   );
 });
+
+test('public directory paginates results without losing eligible doctors', async () => {
+  const app = makeApp();
+  records.set('doctorApplications', Array.from({ length: 3 }, (_, index) => ({
+    _id: new ObjectId(),
+    fullName: `Dr. Directory Page ${index + 1}`,
+    status: 'approved',
+    primarySpecialty: 'Cardiology',
+    city: 'Pune',
+  })));
+
+  const firstPage = await request(app).get('/api/doctors?page=1&limit=2');
+  const secondPage = await request(app).get('/api/doctors?page=2&limit=2');
+
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.total, 3);
+  assert.equal(firstPage.body.count, 2);
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.total, 3);
+  assert.equal(secondPage.body.count, 1);
+  assert.deepEqual(
+    [...firstPage.body.doctors, ...secondPage.body.doctors]
+      .map(({ fullName }) => fullName),
+    ['Dr. Directory Page 1', 'Dr. Directory Page 2', 'Dr. Directory Page 3'],
+  );
+});
