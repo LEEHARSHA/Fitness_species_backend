@@ -47,9 +47,9 @@ Invoke-RestMethod http://localhost:5000/api/health
 
 The response reports `database.name` and `database.status: connected` only after a real MongoDB ping. A database outage returns HTTP 503. Startup fails rather than opening an HTTP listener when MongoDB cannot be reached. Startup initialization creates required marketplace, community, and doctor collections without replacing existing collections, then ensures the application indexes.
 
-## AI Coach Grok configuration
+## AI Coach Gemini configuration
 
-The authenticated `POST /api/ai-coach/chat` route uses user context loaded from the backend and calls xAI server-side. Set `XAI_API_KEY` in the local `.env` file and choose a supported `XAI_MODEL` (the example uses [`grok-4.7`](https://docs.x.ai/developers/models)). Keep the key out of source control and Android/client applications. The API key is required only when the AI Coach route is invoked; the backend can start without it.
+The authenticated `POST /api/ai-coach/chat` route uses Google Gemini server-side through the official `@google/genai` SDK. Set `GEMINI_API_KEY` in the local `.env` file or hosting secret manager and optionally set `GEMINI_MODEL` (the default is `gemini-2.5-flash`). Keep the key out of source control and Android/client applications. The API key is required only when the AI Coach route is invoked; the backend can start without it.
 
 ## API overview
 

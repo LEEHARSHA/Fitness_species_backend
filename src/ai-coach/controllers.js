@@ -1,15 +1,32 @@
 import {
-  askGrokAiCoach,
-  getGrokConfig,
-  GrokApiError,
-  GrokConfigurationError,
-  GrokTimeoutError,
-} from './grokService.js';
+  askGeminiAiCoach,
+  getGeminiConfig,
+  GeminiApiError,
+  GeminiConfigurationError,
+  GeminiTimeoutError,
+} from './geminiService.js';
 import { getAuthenticatedUserContext } from './userContextService.js';
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
+
+const MAX_MESSAGE_LENGTH = 2000;
+const requestCounts = new Map();
+const REQUEST_LIMIT_PER_MINUTE = 20;
+
+function consumeUserRequest(uid) {
+  const now = Date.now();
+  const windowStart = now - 60_000;
+  const recent = (requestCounts.get(uid) || []).filter((timestamp) => timestamp > windowStart);
+  if (recent.length >= REQUEST_LIMIT_PER_MINUTE) {
+    requestCounts.set(uid, recent);
+    return false;
+  }
+  recent.push(now);
+  requestCounts.set(uid, recent);
+  return true;
+}
 
 export function createAiCoachControllers({ getDb }) {
   const collection = (name) => getDb().collection(name);
@@ -22,11 +39,27 @@ export function createAiCoachControllers({ getDb }) {
       res.status(400).json({ success: false, message: 'Message text is required.' });
       return;
     }
+    if (message.trim().length > MAX_MESSAGE_LENGTH) {
+      res.status(400).json({
+        success: false,
+        code: 'AI_MESSAGE_TOO_LONG',
+        message: `Message must be ${MAX_MESSAGE_LENGTH} characters or fewer.`,
+      });
+      return;
+    }
+    if (!consumeUserRequest(req.user.uid)) {
+      res.status(429).json({
+        success: false,
+        code: 'AI_RATE_LIMITED',
+        message: 'AI Coach is receiving too many requests. Please try again shortly.',
+      });
+      return;
+    }
 
     try {
-      getGrokConfig();
+      getGeminiConfig();
     } catch (error) {
-      if (!(error instanceof GrokConfigurationError)) throw error;
+      if (!(error instanceof GeminiConfigurationError)) throw error;
       res.status(503).json({
         success: false,
         code: 'AI_CONFIG_MISSING',
@@ -52,13 +85,13 @@ export function createAiCoachControllers({ getDb }) {
 
     let result;
     try {
-      result = await askGrokAiCoach({
+      result = await askGeminiAiCoach({
         userMessage: message.trim(),
         userContext,
         conversationHistory,
       });
     } catch (error) {
-      if (error instanceof GrokConfigurationError) {
+      if (error instanceof GeminiConfigurationError) {
         res.status(503).json({
           success: false,
           code: 'AI_CONFIG_MISSING',
@@ -66,7 +99,7 @@ export function createAiCoachControllers({ getDb }) {
         });
         return;
       }
-      if (error instanceof GrokTimeoutError) {
+      if (error instanceof GeminiTimeoutError) {
         res.status(504).json({
           success: false,
           code: 'AI_PROVIDER_TIMEOUT',
@@ -74,12 +107,28 @@ export function createAiCoachControllers({ getDb }) {
         });
         return;
       }
-      if (error instanceof GrokApiError) {
+      if (error instanceof GeminiApiError) {
         if (error.status === 429) {
           res.status(429).json({
             success: false,
             code: 'AI_RATE_LIMITED',
             message: 'AI Coach is receiving too many requests. Please try again shortly.',
+          });
+          return;
+        }
+        if (error.status === 401 || error.status === 403) {
+          res.status(503).json({
+            success: false,
+            code: 'AI_PROVIDER_AUTH',
+            message: 'AI Coach is temporarily unavailable. Please try again later.',
+          });
+          return;
+        }
+        if (error.status === 404) {
+          res.status(502).json({
+            success: false,
+            code: 'AI_MODEL_UNAVAILABLE',
+            message: 'The configured AI model is unavailable. Please try again later.',
           });
           return;
         }
