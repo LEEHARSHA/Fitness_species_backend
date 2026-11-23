@@ -1,5 +1,24 @@
+<<<<<<< HEAD
 
 const { verifyFirebaseIdToken } = require('../config/firebase-admin');
+=======
+const { verifyFirebaseIdToken } = require('../config/firebase-admin');
+
+const PRIMARY_PROJECT_ID = 'sellerportal-2786c';
+
+function getUserIdentityFilter(user) {
+  const projectId = user.firebaseProjectId || PRIMARY_PROJECT_ID;
+  const projectScope = projectId === PRIMARY_PROJECT_ID
+    ? { $or: [{ firebaseProjectId: projectId }, { firebaseProjectId: { $exists: false } }] }
+    : { firebaseProjectId: projectId };
+  return {
+    $and: [
+      { firebaseUid: user.uid },
+      projectScope
+    ]
+  };
+}
+>>>>>>> 4a69327 (fsb)
 
 /**
  * Middleware to verify Firebase ID token.
@@ -16,25 +35,46 @@ const requireFirebaseAuth = async (req, res, next) => {
     });
   }
 
-  const idToken = authHeader.split('Bearer ')[1];
+  const match = /^Bearer\s+(\S+)$/i.exec(authHeader);
+  if (!match) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required. Missing or malformed Authorization header.'
+    });
+  }
 
   try {
+<<<<<<< HEAD
     // Verify the token against configured Firebase projects
     const decodedToken = await verifyFirebaseIdToken(idToken);
+=======
+    const decodedToken = await verifyFirebaseIdToken(match[1]);
+    const projectId = decodedToken.aud;
+>>>>>>> 4a69327 (fsb)
 
-    // Attach the verified user details to the request object
     req.user = {
       uid: decodedToken.uid,
+      firebaseProjectId: projectId,
+      databaseUid: projectId === PRIMARY_PROJECT_ID
+        ? decodedToken.uid
+        : `${projectId}:${decodedToken.uid}`,
       email: decodedToken.email,
       name: decodedToken.name,
+<<<<<<< HEAD
       provider: decodedToken.firebase.sign_in_provider,
       firebaseProjectId: decodedToken.aud,
       emailVerified: decodedToken.email_verified
+=======
+      provider: decodedToken.firebase?.sign_in_provider
+>>>>>>> 4a69327 (fsb)
     };
 
     next();
   } catch (error) {
-    console.error('Error verifying Firebase ID token:', error.message);
+    console.warn('[auth] Firebase ID token rejected', {
+      reason: error?.code === 'auth/id-token-expired' ? 'expired_token' : 'invalid_token',
+      ...(typeof error?.code === 'string' ? { firebaseCode: error.code } : {})
+    });
 
     let message = 'Invalid or expired authentication token.';
 
@@ -52,5 +92,6 @@ const requireFirebaseAuth = async (req, res, next) => {
 };
 
 module.exports = {
-  requireFirebaseAuth
+  requireFirebaseAuth,
+  getUserIdentityFilter
 };

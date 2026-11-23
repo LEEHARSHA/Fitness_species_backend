@@ -4,7 +4,7 @@ This Node.js/Express API is the shared backend for the Seller Portal and Admin P
 
 ## Requirements
 
-- Node.js 20 or newer and npm
+- Node.js 22 or newer and npm
 - A MongoDB Atlas database and network access for the backend
 - A Firebase service account from Firebase project `sellerportal-2786c`
 
@@ -27,7 +27,7 @@ In Firebase Console, open project `sellerportal-2786c` → **Project settings** 
 
 For production, prefer setting `FIREBASE_SERVICE_ACCOUNT_JSON` in the hosting provider's encrypted environment settings rather than uploading a key file. It must contain the service-account JSON for `sellerportal-2786c`. Do not print or commit the JSON. The API validates the credential source and project ID and does not log credential values.
 
-The Android client currently uses Firebase project `project-fitness-species`. To enable its backend routes, including AI Coach, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
+The Android client uses Firebase project `project-fitness-species`. Seller Portal, Admin Portal, and Doctor Portal use the primary project `sellerportal-2786c`; their administrative routes remain restricted to that project. To enable Android routes, including AI Coach and appointment booking, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from `project-fitness-species`. Each ID token is verified only by the Firebase Admin app for the exact configured project, and records are scoped by project and UID.
 
 ### MongoDB Atlas network access
 
@@ -49,11 +49,13 @@ The response reports `database.name` and `database.status: connected` only after
 
 ## AI Coach Gemini configuration
 
-The authenticated `POST /api/ai-coach/chat` route uses Google Gemini server-side through the official `@google/genai` SDK. Set `GEMINI_API_KEY` in the local `.env` file or hosting secret manager and optionally set `GEMINI_MODEL` (the default is `gemini-2.5-flash`). Keep the key out of source control and Android/client applications. The API key is required only when the AI Coach route is invoked; the backend can start without it.
+The authenticated `POST /api/ai-coach/chat` route uses Google Gemini server-side through the official `@google/genai` SDK. Set `GEMINI_API_KEY` in the local `.env` file or hosting secret manager and optionally set `GEMINI_MODEL` (the default is `gemini-3.5-flash-lite`, verified with this integration). Keep the key out of source control and Android/client applications. The API key is required only when the AI Coach route is invoked; the backend can start without it. Google identifies Gemini 3.5 Flash-Lite as a free-tier model; usage quotas still apply.
 
 ## API overview
 
 - `GET /api/health` — safe server and database readiness
+- `PATCH /api/users/me/photo` — authenticated multipart upload, with the image in the `photo` field
+- `GET /api/users/photos/:id` — retrieve a stored profile image
 - `GET /api/seller/profile`, `POST /api/seller/profile`, `PATCH /api/seller/profile` — current seller profile
 - `GET /api/seller/products`, `POST /api/seller/products`, `GET /api/seller/products/:productId`, `PATCH /api/seller/products/:productId` — seller-owned products
 - `GET /api/admin/products?status=pending`, `GET /api/admin/products/:productId`, `PATCH /api/admin/products/:productId/review` — admin review
@@ -63,6 +65,8 @@ The authenticated `POST /api/ai-coach/chat` route uses Google Gemini server-side
 - `GET /api/doctors/me`, `PUT /api/doctors/me`, `POST /api/doctors/me/submit` — authenticated doctor profile lifecycle
 - `GET /api/admin/doctors?status=pending_review&page=1&limit=25`, `GET /api/admin/doctors/:id`, `PATCH /api/admin/doctors/:id/review` — unified, allowlisted administrator doctor verification queue
 - `/api/doctor-portal/*` — additive hospital management, doctor invitations, public hospital-doctor discovery, and appointment APIs
+
+Profile images are limited to 5 MB and accepted only as JPEG, PNG, or WebP. The API verifies the file signature, stores image bytes in the persistent MongoDB GridFS `profilePhotos` bucket, and stores only the returned `/api/users/photos/:id` reference in the user profile. The download URL is public so the Android image loader can display it without exposing an ID token; photo updates remain Firebase-authenticated and scoped to the matching Firebase project and UID. No Render filesystem or external image-provider credentials are used.
 
 Doctor applications are stored in `doctorApplications`, uniquely scoped by Firebase project ID and UID. Doctor routes accept only primary-project Firebase ID tokens; submission requires a verified Firebase email claim. Applications begin as drafts, can be submitted after required profile and availability validation, and can be edited only while draft or changes-requested. Rejected applications cannot be resubmitted. Administrators use the existing `ADMIN_FIREBASE_UIDS` allowlist to approve, reject, request changes, suspend approved doctors, and reactivate suspended doctors; decisions and reviewer identifiers are recorded in server-controlled review history. The public `/api/doctors` directory combines individual profiles approved in `doctorApplications` with hospital-linked profiles approved and active in `doctorPortalDoctors` whose organization is approved in `doctorPortalOrganizations`. Its hospital records carry the organization ID/name in addition to the existing clinic name/location fields, and public responses exclude registration numbers, contact details, Firebase identifiers, and review data. Directory queries support `specialty`, `city`, `page`, and `limit` for both doctor sources. Add the Doctor Portal's exact production origin to the existing CORS configuration before browser deployment without removing current portal origins. This phase does not collect Aadhaar data or support document uploads.
 
@@ -154,6 +158,8 @@ The automated tests use isolated fixtures and injected authentication/database a
    - `FIREBASE_PROJECT_ID=sellerportal-2786c`
    - `FIREBASE_SERVICE_ACCOUNT_JSON` (secure JSON value) **or** `GOOGLE_APPLICATION_CREDENTIALS` pointing to a securely provisioned file
    - `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` (secure service-account JSON for the Android app's `project-fitness-species` project)
+   - `GEMINI_API_KEY` (Google AI Studio API key)
+   - `GEMINI_MODEL=gemini-3.5-flash-lite`
    - `ADMIN_FIREBASE_UIDS`
    - `CORS_ORIGINS=http://localhost:3000,http://localhost:3005,https://seller-lilac-five.vercel.app,https://admin-portal-sepia-chi.vercel.app,https://admin-portal-ikh1gy8kt-leeharshas-projects.vercel.app,https://fitness-species-community.vercel.app`
 5. In Atlas, allow the Render service's outbound IP and verify `GET /api/health` returns HTTP 200 with `database.status: connected`. Do not treat a successful deployment or a listening port as proof of MongoDB connectivity.

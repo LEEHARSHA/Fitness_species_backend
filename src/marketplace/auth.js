@@ -53,6 +53,9 @@ export function requireFirebaseAuth(
       req.user = {
         uid: claims.uid,
         firebaseProjectId: claims.aud,
+        databaseUid: claims.aud === 'sellerportal-2786c'
+          ? claims.uid
+          : `${claims.aud}:${claims.uid}`,
         email: typeof claims.email === 'string' ? claims.email : null,
         emailVerified: claims.email_verified === true,
         name: typeof claims.name === 'string' ? claims.name : null,

@@ -8,12 +8,13 @@ import {
 import { getAuthenticatedUserContext } from './userContextService.js';
 
 const asyncRoute = (handler) => (req, res, next) => {
-  Promise.resolve(handler(req, res, next)).catch(next);
+  return Promise.resolve(handler(req, res, next)).catch(next);
 };
 
 const MAX_MESSAGE_LENGTH = 2000;
 const requestCounts = new Map();
 const REQUEST_LIMIT_PER_MINUTE = 20;
+const PRIMARY_FIREBASE_PROJECT_ID = 'sellerportal-2786c';
 
 function consumeUserRequest(uid) {
   const now = Date.now();
@@ -28,7 +29,12 @@ function consumeUserRequest(uid) {
   return true;
 }
 
-export function createAiCoachControllers({ getDb }) {
+export function createAiCoachControllers({
+  getDb,
+  askAiCoach = askGeminiAiCoach,
+  getAiConfig = getGeminiConfig,
+  getUserContext = getAuthenticatedUserContext,
+}) {
   const collection = (name) => getDb().collection(name);
 
   // 1. CHAT WITH AI COACH
@@ -47,7 +53,8 @@ export function createAiCoachControllers({ getDb }) {
       });
       return;
     }
-    if (!consumeUserRequest(req.user.uid)) {
+    const requestIdentity = `${req.user.firebaseProjectId || PRIMARY_FIREBASE_PROJECT_ID}:${req.user.uid}`;
+    if (!consumeUserRequest(requestIdentity)) {
       res.status(429).json({
         success: false,
         code: 'AI_RATE_LIMITED',
@@ -57,7 +64,7 @@ export function createAiCoachControllers({ getDb }) {
     }
 
     try {
-      getGeminiConfig();
+      getAiConfig();
     } catch (error) {
       if (!(error instanceof GeminiConfigurationError)) throw error;
       res.status(503).json({
@@ -70,7 +77,7 @@ export function createAiCoachControllers({ getDb }) {
 
     let userContext;
     try {
-      userContext = await getAuthenticatedUserContext(getDb(), req.user);
+      userContext = await getUserContext(getDb(), req.user);
     } catch (error) {
       console.error('[ai-coach] user context retrieval failed.', {
         errorName: error?.name || 'Error',
@@ -85,7 +92,7 @@ export function createAiCoachControllers({ getDb }) {
 
     let result;
     try {
-      result = await askGeminiAiCoach({
+      result = await askAiCoach({
         userMessage: message.trim(),
         userContext,
         conversationHistory,
@@ -111,8 +118,12 @@ export function createAiCoachControllers({ getDb }) {
         if (error.status === 429) {
           res.status(429).json({
             success: false,
-            code: 'AI_RATE_LIMITED',
-            message: 'AI Coach is receiving too many requests. Please try again shortly.',
+            code: error.providerCode === 'RESOURCE_EXHAUSTED'
+              ? 'AI_QUOTA_EXHAUSTED'
+              : 'AI_RATE_LIMITED',
+            message: error.providerCode === 'RESOURCE_EXHAUSTED'
+              ? 'AI Coach has reached its current usage limit. Please try again later.'
+              : 'AI Coach is receiving too many requests. Please try again shortly.',
           });
           return;
         }
@@ -145,6 +156,7 @@ export function createAiCoachControllers({ getDb }) {
     const now = new Date();
     const chatTurn = {
       firebaseUid: req.user.uid,
+      firebaseProjectId: req.user.firebaseProjectId || PRIMARY_FIREBASE_PROJECT_ID,
       userMessage: message.trim(),
       aiAnswer: result.answer,
       foodAdvice: result.foodAdvice || null,
@@ -166,8 +178,18 @@ export function createAiCoachControllers({ getDb }) {
 
   // 2. GET CONVERSATION HISTORY
   const getAiCoachHistory = asyncRoute(async (req, res) => {
+    const projectId = req.user.firebaseProjectId || PRIMARY_FIREBASE_PROJECT_ID;
+    const identityFilter = projectId === PRIMARY_FIREBASE_PROJECT_ID
+      ? {
+        firebaseUid: req.user.uid,
+        $or: [
+          { firebaseProjectId: projectId },
+          { firebaseProjectId: { $exists: false } },
+        ],
+      }
+      : { firebaseUid: req.user.uid, firebaseProjectId: projectId };
     const history = await collection('ai_coach_chats')
-      .find({ firebaseUid: req.user.uid })
+      .find(identityFilter)
       .sort({ createdAt: -1 })
       .limit(50)
       .toArray();

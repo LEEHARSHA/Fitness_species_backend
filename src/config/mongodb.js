@@ -23,10 +23,14 @@ const requiredCollections = [
   'doctorPortalNotifications',
   'doctorPortalDailyCapacity',
   'doctorPortalAuditLogs',
+  'productOrders',
+  'payments',
+  'paymentWebhookEvents',
+  'userSubscriptions',
 ];
 const requiredIndexes = {
   users: [
-    { firebaseUid: 1 },
+    { firebaseProjectId: 1, firebaseUid: 1 },
   ],
   sellers: [
     { firebaseUid: 1 },
@@ -41,6 +45,22 @@ const requiredIndexes = {
     { status: 1, createdAt: -1 },
     { status: 1, category: 1, createdAt: -1 },
     { sku: 1 },
+  ],
+  productOrders: [
+    { firebaseProjectId: 1, firebaseUid: 1, createdAt: -1 },
+    { firebaseProjectId: 1, firebaseUid: 1, requestId: 1 },
+  ],
+  payments: [
+    { firebaseProjectId: 1, firebaseUid: 1, createdAt: -1 },
+    { razorpayOrderId: 1 },
+    { firebaseProjectId: 1, firebaseUid: 1, purpose: 1, requestId: 1 },
+  ],
+  paymentWebhookEvents: [
+    { eventId: 1 },
+  ],
+  userSubscriptions: [
+    { purchaseTokenHash: 1 },
+    { firebaseProjectId: 1, firebaseUid: 1, expiresAt: -1 },
   ],
   workoutPlans: [
     { userId: 1, status: 1 },
@@ -147,6 +167,22 @@ async function ensureCollections(database, collectionNames = requiredCollections
 }
 
 async function ensureIndexes(database) {
+  let existingUserIndexes = [];
+  try {
+    existingUserIndexes = await database.collection('users').listIndexes().toArray();
+  } catch (error) {
+    if (error.code !== 26 && error.codeName !== 'NamespaceNotFound') throw error;
+  }
+  for (const index of existingUserIndexes) {
+    if (
+      index.unique
+      && index.key?.firebaseUid === 1
+      && Object.keys(index.key).length === 1
+    ) {
+      await database.collection('users').dropIndex(index.name);
+    }
+  }
+
   const registrations = database.collection('communityRegistrations');
   const existingRegistrationIndexes = await registrations.listIndexes().toArray();
   for (const index of existingRegistrationIndexes) {
@@ -165,6 +201,23 @@ async function ensureIndexes(database) {
       ...(collectionName === 'doctorPortalDoctors'
         && keys.assignedFirebaseProjectId && keys.assignedFirebaseUid
         ? { sparse: true }
+        : {}),
+      ...(collectionName === 'userSubscriptions' && keys.purchaseTokenHash
+        ? { unique: true, sparse: true }
+        : {}),
+      ...(collectionName === 'payments' && keys.razorpayOrderId
+        ? { unique: true, sparse: true }
+        : {}),
+      ...(collectionName === 'payments'
+        && keys.firebaseProjectId && keys.firebaseUid && keys.purpose && keys.requestId
+        ? { unique: true, partialFilterExpression: { requestId: { $type: 'string' } } }
+        : {}),
+      ...(collectionName === 'productOrders'
+        && keys.firebaseProjectId && keys.firebaseUid && keys.requestId
+        ? { unique: true, partialFilterExpression: { requestId: { $type: 'string' } } }
+        : {}),
+      ...(collectionName === 'paymentWebhookEvents' && keys.eventId
+        ? { unique: true }
         : {}),
       ...(collectionName === 'users' || collectionName === 'sellers'
         || (collectionName === 'sellerProfiles' && keys.firebaseUid)

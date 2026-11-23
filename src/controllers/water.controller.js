@@ -32,7 +32,7 @@ function formatWaterDoc(doc) {
 const getTodayWater = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
     const dateStr = getTodayDateString(req.query.date);
 
     const filter = { userId: userId, date: dateStr };
@@ -70,7 +70,7 @@ const getTodayWater = async (req, res, next) => {
 const logWaterIntake = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const { amountMl, date, timeStr } = req.body || {};
 
@@ -125,7 +125,7 @@ const logWaterIntake = async (req, res, next) => {
 const updateTodayWaterTarget = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const { targetMl, intakeMl, targetLitres, consumedLitres, date } = req.body || {};
 
@@ -204,7 +204,7 @@ const updateTodayWaterTarget = async (req, res, next) => {
 const getWaterHistory = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const history = await db
       .collection('waterLogs')

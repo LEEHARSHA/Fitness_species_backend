@@ -1,4 +1,5 @@
 const { getDb } = require('../config/mongodb');
+const { getUserIdentityFilter } = require('./auth.middleware');
 
 /**
  * Middleware factory to enforce specific application role(s).
@@ -16,7 +17,7 @@ const requireRole = (...allowedRoles) => {
       }
 
       const db = getDb();
-      const user = await db.collection('users').findOne({ firebaseUid: req.user.uid });
+      const user = await db.collection('users').findOne(getUserIdentityFilter(req.user));
 
       const userRole = user && user.role ? user.role : 'customer';
       req.user.role = userRole;

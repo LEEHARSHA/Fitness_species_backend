@@ -15,14 +15,19 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@google/genai": "^3.6.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^14.4.0",
+    "google-auth-library": "^11.3.4",
     "helmet": "^8.1.0",
     "mongodb": "^7.6.0",
+    "multer": "^2.5.0",
     "razorpay": "^2.9.5",
     "zod": "^4.1.12"
   },

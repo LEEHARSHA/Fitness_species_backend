@@ -1,5 +1,6 @@
 const { ObjectId } = require('mongodb');
 const { getDb } = require('../config/mongodb');
+const { getUserIdentityFilter } = require('../middleware/auth.middleware');
 
 function formatProgressDoc(doc) {
   if (!doc) return null;
@@ -29,7 +30,7 @@ function formatProgressDoc(doc) {
 const createProgressRecord = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const { weight, measurements, notes, date } = req.body || {};
 
@@ -67,7 +68,7 @@ const createProgressRecord = async (req, res, next) => {
     // Sync weight to user profile if provided
     if (weight && Number(weight) > 0) {
       await db.collection('users').updateOne(
-        { firebaseUid: userId },
+        getUserIdentityFilter(req.user),
         {
           $set: {
             'profile.weight': Number(weight),
@@ -94,7 +95,7 @@ const createProgressRecord = async (req, res, next) => {
 const getProgressHistory = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const history = await db
       .collection('progress')
@@ -120,7 +121,7 @@ const getProgressHistory = async (req, res, next) => {
 const getLatestProgress = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const latest = await db
       .collection('progress')
@@ -146,7 +147,7 @@ const getLatestProgress = async (req, res, next) => {
 const updateProgressRecord = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
     const progressId = req.params.id;
 
     if (!ObjectId.isValid(progressId)) {

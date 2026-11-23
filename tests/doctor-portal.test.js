@@ -554,6 +554,9 @@ test('unified admin doctor queue reviews organization doctors without duplicatin
   const booking = {
     doctorId,
     patientName: 'Patient One',
+    patientContact: '+91 8000000000',
+    consultationReason: 'Routine checkup',
+    notes: 'Prefers morning appointments.',
     appointmentDate: '2027-11-01',
     appointmentTime: '09:00',
     appointmentType: 'in_person',
@@ -929,6 +932,8 @@ test('portal booking reserves overlapping slots atomically and hospital appointm
   assert.equal(createdAppointment.body.appointment.status, 'requested');
   assert.ok(createdAppointment.body.appointment.appointmentId);
   assert.equal(createdAppointment.body.appointment.patientAgeAtBooking, 34);
+  assert.equal(createdAppointment.body.appointment.patientContact, booking.patientContact);
+  assert.equal(createdAppointment.body.appointment.consultationReason, booking.consultationReason);
   assert.equal('patientFirebaseUid' in createdAppointment.body.appointment, false);
 
   const overlapping = await auth('android')('post', '/api/doctor-portal/appointments/book', {

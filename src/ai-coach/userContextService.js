@@ -2,15 +2,24 @@ import { ObjectId } from 'mongodb';
 
 const idOf = (val) => new ObjectId(val);
 const hasId = (val) => /^[a-f\d]{24}$/i.test(val || '') && ObjectId.isValid(val);
+const PRIMARY_FIREBASE_PROJECT_ID = 'sellerportal-2786c';
+
+function scopeToFirebaseProject(query, user) {
+  const projectId = user.firebaseProjectId || PRIMARY_FIREBASE_PROJECT_ID;
+  const projectScope = projectId === PRIMARY_FIREBASE_PROJECT_ID
+    ? { $or: [{ firebaseProjectId: projectId }, { firebaseProjectId: { $exists: false } }] }
+    : { firebaseProjectId: projectId };
+  return { $and: [query, projectScope] };
+}
 
 export async function getAuthenticatedUserContext(db, user) {
   const todayStr = new Date().toISOString().split('T')[0];
   const uid = user.uid;
 
   // 1. User Profile & Preferences
-  const userProfile = await db.collection('users').findOne({
-    $or: [{ firebaseUid: uid }, { uid }],
-  });
+  const userProfile = await db.collection('users').findOne(
+    scopeToFirebaseProject({ $or: [{ firebaseUid: uid }, { uid }] }, user),
+  );
 
   const name = userProfile?.name || user.name || 'Fitness Member';
   const height = userProfile?.height || 175;
@@ -20,8 +29,8 @@ export async function getAuthenticatedUserContext(db, user) {
 
   // 2. Today's Food Intake (Diet Plan Consumed + Manually Logged)
   const [dietConsumedDocs, calorieSummaryDocs] = await Promise.all([
-    db.collection('diet_consumption_prefs').find({ firebaseUid: uid, date: todayStr }).toArray(),
-    db.collection('daily_calorie_summaries').find({ firebaseUid: uid, date: todayStr }).toArray(),
+    db.collection('diet_consumption_prefs').find(scopeToFirebaseProject({ firebaseUid: uid, date: todayStr }, user)).toArray(),
+    db.collection('daily_calorie_summaries').find(scopeToFirebaseProject({ firebaseUid: uid, date: todayStr }, user)).toArray(),
   ]);
 
   const dietConsumedCalories = dietConsumedDocs.reduce((acc, doc) => acc + (doc.calories || 0), 0);
@@ -32,12 +41,16 @@ export async function getAuthenticatedUserContext(db, user) {
   const remainingCalories = Math.max(0, targetCalories - totalConsumedCalories);
 
   // 3. Activity & Steps
-  const stepDocs = await db.collection('daily_step_records').find({ firebaseUid: uid, date: todayStr }).toArray();
+  const stepDocs = await db.collection('daily_step_records').find(
+    scopeToFirebaseProject({ firebaseUid: uid, date: todayStr }, user),
+  ).toArray();
   const todaySteps = stepDocs.reduce((acc, s) => acc + (s.stepCount || 0), 0);
   const stepCalories = Math.round(todaySteps * 0.04 * (weight / 70.0));
 
   // 4. Completed Workouts
-  const workoutDocs = await db.collection('completed_workout_records').find({ firebaseUid: uid, date: todayStr }).toArray();
+  const workoutDocs = await db.collection('completed_workout_records').find(
+    scopeToFirebaseProject({ firebaseUid: uid, date: todayStr }, user),
+  ).toArray();
   const workoutCalories = workoutDocs.reduce((acc, w) => acc + (w.caloriesBurned || 0), 0);
   const completedWorkoutsCount = workoutDocs.length;
 

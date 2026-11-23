@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { analyzeFoodPortion } from './userContextService.js';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const REQUEST_TIMEOUT_MS = 20_000;
 
 export class GeminiConfigurationError extends Error {
@@ -19,10 +19,11 @@ export class GeminiTimeoutError extends Error {
 }
 
 export class GeminiApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, providerCode = null) {
     super(message);
     this.name = 'GeminiApiError';
     this.status = status;
+    this.providerCode = providerCode;
   }
 }
 
@@ -49,10 +50,44 @@ export function extractGeminiResponseText(response) {
     .trim();
 }
 
-export async function askGeminiAiCoach({ userMessage, userContext, conversationHistory = [] }) {
+function getSafeProviderDetails(error, apiKey) {
+  let payload;
+  try {
+    payload = JSON.parse(error?.message || '');
+  } catch {
+    payload = null;
+  }
+  const rawMessage = typeof payload?.error?.message === 'string'
+    ? payload.error.message
+    : typeof error?.message === 'string'
+      ? error.message
+      : '';
+  const providerCode = typeof payload?.error?.status === 'string'
+    ? payload.error.status
+    : typeof error?.code === 'string'
+      ? error.code
+      : null;
+  const safeMessage = rawMessage
+    .replaceAll(apiKey, '[redacted]')
+    .replace(/key=[^&\s"'`]+/gi, 'key=[redacted]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 300);
+  return { providerCode, safeMessage };
+}
+
+export async function askGeminiAiCoach({
+  userMessage,
+  userContext,
+  conversationHistory = [],
+  clientFactory = (apiKey) => new GoogleGenAI({
+    apiKey,
+    httpOptions: { apiVersion: 'v1' },
+  }),
+}) {
   const { apiKey, model } = getGeminiConfig();
   const foodAdvice = analyzeFoodPortion(userMessage, userContext);
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = clientFactory(apiKey);
 
   const systemInstruction = `You are Fitness Species AI Coach, a friendly and supportive general fitness and nutrition assistant.
 Keep responses concise, practical, and encouraging, ideally 2-4 sentences.
@@ -91,7 +126,6 @@ Do not claim access to the user's private fitness records.`;
       config: {
         systemInstruction,
         maxOutputTokens: 350,
-        temperature: 0.7,
         abortSignal: abortController.signal,
       },
     });
@@ -115,11 +149,14 @@ Do not claim access to the user's private fitness records.`;
     }
 
     const status = error?.status || error?.statusCode || error?.response?.status || 0;
+    const { providerCode, safeMessage } = getSafeProviderDetails(error, apiKey);
     console.error('[ai-coach] Gemini provider request failed.', {
+      model,
       status,
-      errorCode: typeof error?.code === 'string' ? error.code : 'UNKNOWN',
+      providerCode,
+      providerMessage: safeMessage || 'No provider message returned.',
     });
-    throw new GeminiApiError(status, 'Unable to complete the Gemini request.');
+    throw new GeminiApiError(status, 'Unable to complete the Gemini request.', providerCode);
   } finally {
     clearTimeout(timeout);
   }

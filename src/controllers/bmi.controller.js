@@ -1,4 +1,5 @@
 const { getDb } = require('../config/mongodb');
+const { getUserIdentityFilter } = require('../middleware/auth.middleware');
 
 function formatBmiDoc(doc) {
   if (!doc) return null;
@@ -22,7 +23,7 @@ function formatBmiDoc(doc) {
 const calculateAndSaveBmi = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const { weight, height, bmi, categoryLabel, date } = req.body || {};
 
@@ -73,7 +74,7 @@ const calculateAndSaveBmi = async (req, res, next) => {
 
     // Sync user profile weight, height, bmi
     await db.collection('users').updateOne(
-      { firebaseUid: userId },
+      getUserIdentityFilter(req.user),
       {
         $set: {
           'profile.weight': parsedWeight,
@@ -101,7 +102,7 @@ const calculateAndSaveBmi = async (req, res, next) => {
 const getLatestBmi = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const latest = await db
       .collection('bmiHistory')
@@ -127,7 +128,7 @@ const getLatestBmi = async (req, res, next) => {
 const getBmiHistory = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const history = await db
       .collection('bmiHistory')

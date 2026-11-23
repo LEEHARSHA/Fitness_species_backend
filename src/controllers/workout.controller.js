@@ -30,7 +30,7 @@ function formatPlanResponse(doc) {
 const getActiveWorkout = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const activePlan = await db.collection('workoutPlans').findOne({
       userId: userId,
@@ -62,7 +62,7 @@ const getActiveWorkout = async (req, res, next) => {
 const generateWorkoutPlan = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const {
       environment,
@@ -138,7 +138,7 @@ const generateWorkoutPlan = async (req, res, next) => {
 const getWorkoutHistory = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const historyPlans = await db
       .collection('workoutPlans')

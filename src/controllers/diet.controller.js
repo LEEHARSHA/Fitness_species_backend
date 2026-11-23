@@ -27,7 +27,7 @@ function formatDietPlanResponse(doc) {
 const getActiveDiet = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const activePlan = await db.collection('dietPlans').findOne({
       userId: userId,
@@ -59,7 +59,7 @@ const getActiveDiet = async (req, res, next) => {
 const generateDietPlan = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const {
       goal,
@@ -134,7 +134,7 @@ const generateDietPlan = async (req, res, next) => {
 const getDietHistory = async (req, res, next) => {
   try {
     const db = getDb();
-    const userId = req.user.uid;
+    const userId = req.user.databaseUid || req.user.uid;
 
     const historyPlans = await db
       .collection('dietPlans')

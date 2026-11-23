@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import mongo from '../src/config/mongodb.js';
 
-function fakeDatabase(initialCollections = [], initialRegistrationIndexes = []) {
+function fakeDatabase(
+  initialCollections = [],
+  initialRegistrationIndexes = [],
+  initialUserIndexes = [],
+) {
   const collections = new Set(initialCollections);
   const created = [];
   const indexes = [];
@@ -31,11 +35,15 @@ function fakeDatabase(initialCollections = [], initialRegistrationIndexes = []) 
         listIndexes: () => ({
           toArray: async () => name === 'communityRegistrations'
             ? initialRegistrationIndexes
-            : [],
+            : name === 'users'
+              ? initialUserIndexes
+              : [],
         }),
         dropIndex: async (indexName) => {
           droppedIndexes.push(indexName);
           initialRegistrationIndexes = initialRegistrationIndexes
+            .filter((index) => index.name !== indexName);
+          initialUserIndexes = initialUserIndexes
             .filter((index) => index.name !== indexName);
         },
         createIndex: async (keys, options) => {
@@ -68,6 +76,10 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorPortalNotifications',
     'doctorPortalDailyCapacity',
     'doctorPortalAuditLogs',
+    'productOrders',
+    'payments',
+    'paymentWebhookEvents',
+    'userSubscriptions',
   ]);
   assert.deepEqual([...database.collections].sort(), [
     'communityEvents',
@@ -84,8 +96,12 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorPortalNotifications',
     'doctorPortalOrganizations',
     'doctorPortalStaff',
+    'paymentWebhookEvents',
+    'payments',
+    'productOrders',
     'products',
     'sellerProfiles',
+    'userSubscriptions',
   ]);
 });
 
@@ -105,6 +121,12 @@ test('MongoDB index initialization is repeatable and creates required indexes', 
   await mongo.ensureIndexes(database);
   await assert.doesNotReject(mongo.ensureIndexes(database));
 
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'users'
+    && index.keys.firebaseProjectId === 1
+    && index.keys.firebaseUid === 1
+    && index.options.unique === true
+  )));
   assert.ok(database.indexes.some((index) => (
     index.name === 'sellerProfiles'
     && index.keys.firebaseUid === 1
@@ -162,6 +184,24 @@ test('MongoDB index initialization is repeatable and creates required indexes', 
   assert.ok(database.indexes.some((index) => (
     index.name === 'doctorPortalNotifications'
     && index.keys.eventKey === 1
+    && index.options.unique === true
+  )));
+});
+
+test('MongoDB replaces the legacy user UID-only uniqueness index', async () => {
+  const database = fakeDatabase([], [], [{
+    name: 'firebaseUid_1',
+    key: { firebaseUid: 1 },
+    unique: true,
+  }]);
+
+  await mongo.ensureIndexes(database);
+
+  assert.deepEqual(database.droppedIndexes, ['firebaseUid_1']);
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'users'
+    && index.keys.firebaseProjectId === 1
+    && index.keys.firebaseUid === 1
     && index.options.unique === true
   )));
 });

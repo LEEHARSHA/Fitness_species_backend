@@ -147,6 +147,9 @@ export function createDoctorPortalControllers({ getDb }) {
     id: appointment._id.toString(),
     appointmentId: appointment.appointmentId,
     patientName: appointment.patientName,
+    patientContact: appointment.patientContact,
+    consultationReason: appointment.consultationReason,
+    notes: appointment.notes,
     doctorId: appointment.doctorId,
     doctorName: appointment.doctorName,
     doctorSpecialization: appointment.doctorSpecialization,
@@ -157,6 +160,10 @@ export function createDoctorPortalControllers({ getDb }) {
     appointmentTime: appointment.appointmentTime,
     appointmentType: appointment.appointmentType,
     status: appointment.status,
+    consultationFee: appointment.consultationFee ?? null,
+    currency: appointment.currency || 'INR',
+    paymentStatus: appointment.paymentStatus || 'not_required',
+    paidAt: appointment.paidAt || null,
     statusHistory: (appointment.statusHistory || []).map(({ status, changedAt }) => ({ status, changedAt })),
     rescheduleHistory: (appointment.rescheduleHistory || []).map(({
       previousDate,
@@ -1692,7 +1699,28 @@ export function createDoctorPortalControllers({ getDb }) {
       res.status(409).json({ success: false, code: 'APPOINTMENT_TIME_PASSED', message: 'Choose a future appointment time.' });
       return;
     }
+    if (!Number.isFinite(provider.consultationFee) || provider.consultationFee < 0) {
+      res.status(409).json({ success: false, code: 'CONSULTATION_FEE_UNAVAILABLE', message: 'The doctor does not have a valid consultation fee configured.' });
+      return;
+    }
     const appointments = collection('doctorPortalAppointments');
+    const now = new Date();
+    const expiredHolds = await appointments.find({
+      doctorId: provider.doctorId,
+      appointmentDate: parsed.data.appointmentDate,
+      status: 'requested',
+      paymentStatus: 'pending',
+      paymentExpiresAt: { $lte: now },
+    }).toArray();
+    for (const expired of expiredHolds) {
+      const released = await appointments.updateOne(
+        { _id: expired._id, status: 'requested', paymentStatus: 'pending', paymentExpiresAt: { $lte: now } },
+        { $set: { status: 'cancelled', paymentStatus: 'expired', updatedAt: now } },
+      );
+      if (released.modifiedCount === 1) {
+        await releaseDailyCapacity(provider.doctorId, expired.appointmentDate);
+      }
+    }
     const reserved = await reserveDailyCapacity(
       provider.doctorId,
       parsed.data.appointmentDate,
@@ -1702,7 +1730,6 @@ export function createDoctorPortalControllers({ getDb }) {
       res.status(409).json({ success: false, code: 'DAILY_LIMIT_REACHED', message: 'The doctor has reached the appointment limit for this day.' });
       return;
     }
-    const now = new Date();
     const appointmentId = new ObjectId();
     const appointment = {
       _id: appointmentId,
@@ -1717,6 +1744,12 @@ export function createDoctorPortalControllers({ getDb }) {
       patientFirebaseProjectId: req.user.firebaseProjectId,
       patientFirebaseUid: req.user.uid,
       status: 'requested',
+      consultationFee: provider.consultationFee,
+      currency: provider.currency || 'INR',
+      paymentStatus: provider.consultationFee > 0 ? 'pending' : 'not_required',
+      ...(provider.consultationFee > 0
+        ? { paymentExpiresAt: new Date(now.getTime() + 15 * 60 * 1000) }
+        : {}),
       slotKeys: slotKeysFor(provider.doctorId, parsed.data.appointmentDate, parsed.data.appointmentTime, provider.appointmentDurationMinutes),
       statusHistory: [{ status: 'requested', changedBy: req.user.uid, changedAt: now }],
       createdAt: now,

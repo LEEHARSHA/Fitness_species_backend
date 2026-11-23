@@ -138,6 +138,9 @@ export const doctorActiveSchema = z.object({ isActive: z.boolean() }).strict();
 export const appointmentBookingSchema = z.object({
   doctorId: objectId,
   patientName: text(2, 120),
+  patientContact: optionalText(40).default(''),
+  consultationReason: optionalText(300).default(''),
+  notes: optionalText(2000).default(''),
   patientGender: z.enum(['female', 'male', 'non_binary', 'prefer_not_to_say']).optional(),
   patientAgeAtBooking: z.number().int().min(0).max(120).optional(),
   appointmentDate: z.string().date(),

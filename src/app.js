@@ -14,6 +14,7 @@ import { createDoctorRoutes } from './doctors/routes.js';
 import { createDoctorPortalRoutes } from './doctor-portal/routes.js';
 import { createPaymentRoutes } from './payments/routes.js';
 import { createAiCoachRoutes } from './ai-coach/routes.js';
+import { createNotificationRoutes } from './notifications/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -94,7 +95,7 @@ export function createApp({
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   }));
-  app.use(express.json({ limit: '1mb', strict: true }));
+  app.use(express.json({ limit: '10mb', strict: true }));
 
   app.get('/api/health', async (_req, res) => {
     let ready = false;
@@ -168,6 +169,7 @@ export function createApp({
     getDb,
     verifyIdToken,
     primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
     adminUids,
   }));
   app.use('/api', createAiCoachRoutes({
@@ -175,6 +177,11 @@ export function createApp({
     verifyIdToken,
     primaryFirebaseProjectId,
     supportedFirebaseProjectIds,
+  }));
+  app.use('/api', createNotificationRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
   }));
 
   app.use((_req, res) => {
