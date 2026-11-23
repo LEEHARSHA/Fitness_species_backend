@@ -13,6 +13,7 @@ import { createCommunityRoutes } from './community/routes.js';
 import { createDoctorRoutes } from './doctors/routes.js';
 import { createDoctorPortalRoutes } from './doctor-portal/routes.js';
 import { createPaymentRoutes } from './payments/routes.js';
+import { createAiCoachRoutes } from './ai-coach/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -168,6 +169,11 @@ export function createApp({
     verifyIdToken,
     primaryFirebaseProjectId,
     adminUids,
+  }));
+  app.use('/api', createAiCoachRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
   }));
 
   app.use((_req, res) => {
