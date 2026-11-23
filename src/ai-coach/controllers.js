@@ -1,5 +1,10 @@
-import { ObjectId } from 'mongodb';
-import { askGrokAiCoach, getGrokConfig, GrokApiError, GrokConfigurationError } from './grokService.js';
+import {
+  askGrokAiCoach,
+  getGrokConfig,
+  GrokApiError,
+  GrokConfigurationError,
+  GrokTimeoutError,
+} from './grokService.js';
 import { getAuthenticatedUserContext } from './userContextService.js';
 
 const asyncRoute = (handler) => (req, res, next) => {
@@ -20,50 +25,94 @@ export function createAiCoachControllers({ getDb }) {
 
     try {
       getGrokConfig();
-      const userContext = await getAuthenticatedUserContext(getDb(), req.user);
-      const result = await askGrokAiCoach({
+    } catch (error) {
+      if (!(error instanceof GrokConfigurationError)) throw error;
+      res.status(503).json({
+        success: false,
+        code: 'AI_CONFIG_MISSING',
+        message: 'AI Coach is temporarily unavailable. Please try again later.',
+      });
+      return;
+    }
+
+    let userContext;
+    try {
+      userContext = await getAuthenticatedUserContext(getDb(), req.user);
+    } catch (error) {
+      console.error('[ai-coach] user context retrieval failed.', {
+        errorName: error?.name || 'Error',
+      });
+      res.status(503).json({
+        success: false,
+        code: 'USER_CONTEXT_UNAVAILABLE',
+        message: 'Fitness Species could not load your fitness data. Please try again.',
+      });
+      return;
+    }
+
+    let result;
+    try {
+      result = await askGrokAiCoach({
         userMessage: message.trim(),
         userContext,
         conversationHistory,
-      });
-
-      const now = new Date();
-      const chatTurn = {
-        firebaseUid: req.user.uid,
-        userMessage: message.trim(),
-        aiAnswer: result.answer,
-        foodAdvice: result.foodAdvice || null,
-        contextSummary: result.userContextSummary,
-        createdAt: now,
-      };
-
-      await collection('ai_coach_chats').insertOne(chatTurn);
-
-      res.json({
-        success: true,
-        answer: result.answer,
-        foodAdvice: result.foodAdvice || null,
-        contextSummary: result.userContextSummary,
-        suggestedActions: result.foodAdvice ? ['Log this meal'] : [],
-        createdAt: now.toISOString(),
       });
     } catch (error) {
       if (error instanceof GrokConfigurationError) {
         res.status(503).json({
           success: false,
-          message: 'AI Coach is not configured. Set XAI_API_KEY in the backend environment.',
+          code: 'AI_CONFIG_MISSING',
+          message: 'AI Coach is temporarily unavailable. Please try again later.',
+        });
+        return;
+      }
+      if (error instanceof GrokTimeoutError) {
+        res.status(504).json({
+          success: false,
+          code: 'AI_PROVIDER_TIMEOUT',
+          message: 'AI Coach timed out. Please try again shortly.',
         });
         return;
       }
       if (error instanceof GrokApiError) {
+        if (error.status === 429) {
+          res.status(429).json({
+            success: false,
+            code: 'AI_RATE_LIMITED',
+            message: 'AI Coach is receiving too many requests. Please try again shortly.',
+          });
+          return;
+        }
         res.status(502).json({
           success: false,
-          message: 'AI Coach is temporarily unavailable.',
+          code: 'AI_PROVIDER_ERROR',
+          message: 'AI Coach is temporarily unavailable. Please try again later.',
         });
         return;
       }
       throw error;
     }
+
+    const now = new Date();
+    const chatTurn = {
+      firebaseUid: req.user.uid,
+      userMessage: message.trim(),
+      aiAnswer: result.answer,
+      foodAdvice: result.foodAdvice || null,
+      contextSummary: result.userContextSummary,
+      createdAt: now,
+    };
+
+    await collection('ai_coach_chats').insertOne(chatTurn);
+
+    res.json({
+      success: true,
+      answer: result.answer,
+      foodAdvice: result.foodAdvice || null,
+      contextSummary: result.userContextSummary,
+      suggestedActions: result.foodAdvice ? ['Log this meal'] : [],
+      createdAt: now.toISOString(),
+    });
   });
 
   // 2. GET CONVERSATION HISTORY

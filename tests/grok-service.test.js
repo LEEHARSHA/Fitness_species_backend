@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { createAiCoachControllers } from '../src/ai-coach/controllers.js';
+import { extractGrokResponseText } from '../src/ai-coach/grokService.js';
 
 test('backend app can start and serve health without XAI_API_KEY', async () => {
   const previousApiKey = process.env.XAI_API_KEY;
@@ -59,7 +60,8 @@ test('AI Coach returns a safe configuration error when XAI_API_KEY is absent', a
     assert.equal(response.statusCode, 503);
     assert.deepEqual(response.body, {
       success: false,
-      message: 'AI Coach is not configured. Set XAI_API_KEY in the backend environment.',
+      code: 'AI_CONFIG_MISSING',
+      message: 'AI Coach is temporarily unavailable. Please try again later.',
     });
   } finally {
     if (previousApiKey === undefined) delete process.env.XAI_API_KEY;
@@ -67,4 +69,19 @@ test('AI Coach returns a safe configuration error when XAI_API_KEY is absent', a
     if (previousModel === undefined) delete process.env.XAI_MODEL;
     else process.env.XAI_MODEL = previousModel;
   }
+});
+
+test('Grok Responses API text is extracted from typed output content', () => {
+  assert.equal(extractGrokResponseText({
+    output: [
+      { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'not user output' }] },
+      {
+        type: 'message',
+        content: [
+          { type: 'output_text', text: 'Use the authenticated ' },
+          { type: 'output_text', text: 'fitness context.' },
+        ],
+      },
+    ],
+  }), 'Use the authenticated fitness context.');
 });

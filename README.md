@@ -27,7 +27,7 @@ In Firebase Console, open project `sellerportal-2786c` → **Project settings** 
 
 For production, prefer setting `FIREBASE_SERVICE_ACCOUNT_JSON` in the hosting provider's encrypted environment settings rather than uploading a key file. It must contain the service-account JSON for `sellerportal-2786c`. Do not print or commit the JSON. The API validates the credential source and project ID and does not log credential values.
 
-The Android client currently uses Firebase project `project-fitness-species`. To enable its event registration routes, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
+The Android client currently uses Firebase project `project-fitness-species`. To enable its backend routes, including AI Coach, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
 
 ### MongoDB Atlas network access
 

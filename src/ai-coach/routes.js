@@ -5,9 +5,17 @@ import { createAiCoachControllers } from './controllers.js';
 export function createAiCoachRoutes(dependencies) {
   const router = express.Router();
   const controllers = createAiCoachControllers(dependencies);
-  const authenticate = requireFirebaseAuth(dependencies.verifyIdToken, [
-    dependencies.primaryFirebaseProjectId || process.env.FIREBASE_PROJECT_ID || 'sellerportal-2786c',
+  const primaryProjectId = dependencies.primaryFirebaseProjectId
+    || process.env.FIREBASE_PROJECT_ID
+    || 'sellerportal-2786c';
+  const supportedProjectIds = new Set([
+    primaryProjectId,
+    ...(dependencies.supportedFirebaseProjectIds || []),
   ]);
+  const authenticate = requireFirebaseAuth(
+    dependencies.verifyIdToken,
+    [...supportedProjectIds],
+  );
 
   router.post('/ai-coach/chat', authenticate, controllers.chatWithAiCoach);
   router.get('/ai-coach/history', authenticate, controllers.getAiCoachHistory);
