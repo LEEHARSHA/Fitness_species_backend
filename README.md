@@ -27,7 +27,7 @@ In Firebase Console, open project `sellerportal-2786c` → **Project settings** 
 
 For production, prefer setting `FIREBASE_SERVICE_ACCOUNT_JSON` in the hosting provider's encrypted environment settings rather than uploading a key file. It must contain the service-account JSON for `sellerportal-2786c`. Do not print or commit the JSON. The API validates the credential source and project ID and does not log credential values.
 
-The Android client currently uses Firebase project `project-fitness-species`. To enable its event registration routes, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
+The Android client currently uses Firebase project `project-fitness-species`. To enable its backend routes, including AI Coach, set `FIREBASE_SERVICE_ACCOUNT_JSON_PROJECT_FITNESS_SPECIES` as a separate encrypted hosting secret containing credentials from that project. The Android project is deliberately not enabled unless this second credential is configured and validates at startup.
 
 ### MongoDB Atlas network access
 
@@ -46,6 +46,10 @@ Invoke-RestMethod http://localhost:5000/api/health
 ```
 
 The response reports `database.name` and `database.status: connected` only after a real MongoDB ping. A database outage returns HTTP 503. Startup fails rather than opening an HTTP listener when MongoDB cannot be reached. Startup initialization creates required marketplace, community, and doctor collections without replacing existing collections, then ensures the application indexes.
+
+## AI Coach Gemini configuration
+
+The authenticated `POST /api/ai-coach/chat` route uses Google Gemini server-side through the official `@google/genai` SDK. Set `GEMINI_API_KEY` in the local `.env` file or hosting secret manager and optionally set `GEMINI_MODEL` (the default is `gemini-2.5-flash`). Keep the key out of source control and Android/client applications. The API key is required only when the AI Coach route is invoked; the backend can start without it.
 
 ## API overview
 

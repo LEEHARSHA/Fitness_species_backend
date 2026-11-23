@@ -12,6 +12,8 @@ import { createMarketplaceRoutes } from './marketplace/routes.js';
 import { createCommunityRoutes } from './community/routes.js';
 import { createDoctorRoutes } from './doctors/routes.js';
 import { createDoctorPortalRoutes } from './doctor-portal/routes.js';
+import { createPaymentRoutes } from './payments/routes.js';
+import { createAiCoachRoutes } from './ai-coach/routes.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -161,6 +163,18 @@ export function createApp({
     primaryFirebaseProjectId,
     supportedFirebaseProjectIds,
     adminUids,
+  }));
+  app.use('/api', createPaymentRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
+    adminUids,
+  }));
+  app.use('/api', createAiCoachRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
   }));
 
   app.use((_req, res) => {
