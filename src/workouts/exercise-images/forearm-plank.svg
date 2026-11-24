@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Forearm Plank</title><desc id="desc">Original side-view forearm plank position with elbows under shoulders and a straight line from head to heels.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">FOREARM PLANK</text>
+  <text x="89" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">ELBOWS UNDER SHOULDERS</text><text x="422" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">STRAIGHT BODY</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M68 260h220m-193 0v-16"/><circle cx="103" cy="176" r="14" fill="#b9e2ec"/><path d="M118 180l101 25 42 14m-143-33-17 58m118-24 27 40m15-41 27 41"/>
+    <path d="M381 260h219m-193 0v-16"/><circle cx="416" cy="176" r="14" fill="#b9e2ec"/><path d="M431 180l101 25 42 14m-143-33-17 58m118-24 27 40m15-41 27 41"/>
+  </g><path d="M282 180h54m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Brace abdomen and glutes; breathe steadily without letting the back sag.</text>
+</svg>

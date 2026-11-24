@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Lat Pulldown</title><desc id="desc">Original seated cable-machine sequence from overhead arms to elbows driving down and bar at upper chest.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">LAT PULLDOWN</text>
+  <text x="105" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">REACH</text><text x="418" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">PULL TO CHEST</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M125 122v148m0-148h90m-8 0v136"/><circle cx="166" cy="158" r="14" fill="#b9e2ec"/><path d="M166 174v51m0-38-25-43m25 43 23-43m-23 81-23 20m23-20 23 20m-23-20v40"/>
+    <path d="M130 112h78" stroke="#db7b2b" stroke-width="6"/><path d="M130 104v16m-7-12v8m78-12v16m7-12v8" stroke="#db7b2b" stroke-width="4"/>
+    <path d="M420 122v148m0-148h90m-8 0v136"/><circle cx="461" cy="158" r="14" fill="#b9e2ec"/><path d="M461 174v51m0-38-27-8m27 8 25-8m-52 46-22 20m22-20 22 20m-22-20v40"/>
+    <path d="M425 190h78" stroke="#db7b2b" stroke-width="6"/><path d="M425 182v16m-7-12v8m78-12v16m7-12v8" stroke="#db7b2b" stroke-width="4"/>
+  </g><path d="M282 180h54m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Stay tall; draw elbows down, avoid swinging, and return the bar slowly.</text>
+</svg>

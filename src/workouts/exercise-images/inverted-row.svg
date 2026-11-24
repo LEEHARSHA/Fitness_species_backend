@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Inverted Row</title><desc id="desc">Original side-view sequence beneath a securely fixed bar, showing a straight body and chest pulled toward the hands.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">INVERTED ROW</text>
+  <text x="95" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">HANG BELOW BAR</text><text x="410" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">PULL CHEST UP</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M66 144h223" stroke="#db7b2b" stroke-width="7"/><path d="M106 144v125m145-125v125"/><circle cx="112" cy="210" r="14" fill="#b9e2ec"/><path d="M126 214l84 29 63 17m-147-46-20-30m104 59 20 24m61-7 19 24"/>
+    <path d="M380 144h223" stroke="#db7b2b" stroke-width="7"/><path d="M420 144v125m145-125v125"/><circle cx="452" cy="191" r="14" fill="#b9e2ec"/><path d="M466 195l82 21 29 15m-125-20-28-31m92 36 20-31m41 46 20 24"/>
+  </g><path d="M304 180h36m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Only use a securely fixed bar; keep the body straight and pull with elbows.</text>
+</svg>

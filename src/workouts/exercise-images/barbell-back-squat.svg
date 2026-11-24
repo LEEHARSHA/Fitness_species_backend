@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Barbell Back Squat</title><desc id="desc">Original side-view sequence: stand braced with a bar on the upper back, squat with knees tracking over toes, then stand.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">BARBELL BACK SQUAT</text>
+  <text x="92" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">START</text><text x="405" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">CONTROLLED DEPTH</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="158" cy="126" r="15" fill="#b9e2ec"/><path d="M158 143v65m-1-49-34 16m35-16 31 16m-31 33-22 54m22-54 21 54m-43 0h-14m35 0h14"/>
+    <path d="M96 143h125" stroke="#db7b2b" stroke-width="6"/><path d="M96 132v22m-8-17v12m133-17v22m8-17v12" stroke="#db7b2b" stroke-width="4"/>
+    <circle cx="470" cy="126" r="15" fill="#b9e2ec"/><path d="M470 143l-9 58m0-43-31 12m31-12 30 10m-30 33-42 30m42-30 34 27m-76 3h-14m90-3h14"/>
+    <path d="M408 143h125" stroke="#db7b2b" stroke-width="6"/><path d="M408 132v22m-8-17v12m133-17v22m8-17v12" stroke="#db7b2b" stroke-width="4"/>
+  </g><path d="M282 180h54m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Brace, sit between hips, keep knees over toes; drive through the whole foot.</text>
+</svg>

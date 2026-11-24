@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Glute Bridge</title><desc id="desc">Original floor-level sequence showing knees bent, hips lowered, then raised into a straight shoulder-to-knee line.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">GLUTE BRIDGE</text>
+  <text x="95" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">LOWERED</text><text x="410" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">LIFT HIPS</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M65 254h220"/><circle cx="106" cy="223" r="14" fill="#b9e2ec"/><path d="M120 226l58 15 37 13 27-30m-119 0-19 20m146-20 17 20"/>
+    <path d="M380 254h220"/><circle cx="421" cy="223" r="14" fill="#b9e2ec"/><path d="M435 226l51-36 37 12 27 52m-112-28-19 20m146-20 17 20"/>
+  </g><path d="M282 180h54m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Lift by squeezing glutes; finish with shoulders, hips, and knees aligned.</text>
+</svg>

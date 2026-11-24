@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Barbell Bench Press</title><desc id="desc">Original two-position diagram showing a controlled bar path from mid-chest to straight arms above the chest.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">BARBELL BENCH PRESS</text>
+  <text x="95" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">LOWER</text><text x="409" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">PRESS</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M70 244h215m-202 0v-14m185 14v-14"/><circle cx="128" cy="220" r="14" fill="#b9e2ec"/><path d="M143 222l74 1m-54-1-13 25m13-25-14 25m-13-25-20-20m94 21 27 16"/>
+    <path d="M81 177h178" stroke="#db7b2b" stroke-width="6"/><path d="M81 166v22m-8-17v12m178-17v22m8-17v12" stroke="#db7b2b" stroke-width="4"/>
+    <path d="M370 244h215m-202 0v-14m185 14v-14"/><circle cx="428" cy="220" r="14" fill="#b9e2ec"/><path d="M443 222l74 1m-54-1-13 25m13-25-14 25m-13-25-8-49m94 50 8-49"/>
+    <path d="M389 158h178" stroke="#db7b2b" stroke-width="6"/><path d="M389 147v22m-8-17v12m178-17v22m8-17v12" stroke="#db7b2b" stroke-width="4"/>
+  </g><path d="M297 180h44m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Feet planted, shoulder blades set; lower to mid-chest without bouncing.</text>
+</svg>

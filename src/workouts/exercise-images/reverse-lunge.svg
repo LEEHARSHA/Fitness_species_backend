@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Reverse Lunge</title><desc id="desc">Original side-view sequence showing a step backward and controlled lowering with both knees bent.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">REVERSE LUNGE</text>
+  <text x="95" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">STEP BACK</text><text x="412" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">LOWER BOTH KNEES</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="158" cy="126" r="15" fill="#b9e2ec"/><path d="M158 143v65m0-49-27 15m27-15 28 15m-28 34-21 54m21-54 21 54m-42 0h-14m56 0h14"/>
+    <circle cx="470" cy="126" r="15" fill="#b9e2ec"/><path d="M470 143v58m0-42-28 12m28-12 29 12m-29 30 25 35m-25-35-44 36m44-36 37 36m-37-36 49-8m-86 44h-13m87 0h14"/>
+  </g><path d="M282 180h54m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Step back under control; keep the front knee aligned over its foot.</text>
+</svg>

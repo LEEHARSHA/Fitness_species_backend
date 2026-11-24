@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Pull-Up</title><desc id="desc">Original front-view sequence showing a controlled hang and a strict pull until the chin clears a secure bar.</desc>
+  <rect width="640" height="360" rx="24" fill="#f3f7fb"/><text x="32" y="46" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#17324d">PULL-UP</text>
+  <text x="100" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">HANG</text><text x="420" y="84" font-family="Arial,sans-serif" font-size="15" fill="#517087">PULL ABOVE BAR</text>
+  <g fill="none" stroke="#176b87" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M83 115h210" stroke="#db7b2b" stroke-width="7"/><path d="M154 115v20m68-20v20"/><circle cx="188" cy="157" r="14" fill="#b9e2ec"/><path d="M188 172v53m0-43-34-47m34 47 34-47m-34 90-21 43m21-43 21 43"/>
+    <path d="M393 115h210" stroke="#db7b2b" stroke-width="7"/><path d="M464 115v20m68-20v20"/><circle cx="498" cy="128" r="14" fill="#b9e2ec"/><path d="M498 143v51m0-39-34-27m34 27 34-27m-34 66-21 43m21-43 21 43"/>
+  </g><path d="M304 180h36m-12-12 12 12-12 12" fill="none" stroke="#7b9bad" stroke-width="4"/>
+  <text x="32" y="314" font-family="Arial,sans-serif" font-size="16" fill="#17324d">Start from a secure bar; avoid kicking and lower to a controlled hang.</text>
+</svg>

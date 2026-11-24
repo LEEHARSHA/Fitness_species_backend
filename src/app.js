@@ -1,9 +1,10 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
-import workoutRoutes from './routes/workout.routes.js';
+import workoutRoutesModule from './routes/workout.routes.js';
 import { createWorkoutSessionRoutes } from './workouts/sessions.js';
 import dietRoutes from './routes/diet.routes.js';
 import progressRoutes from './routes/progress.routes.js';
@@ -16,6 +17,7 @@ import { createDoctorPortalRoutes } from './doctor-portal/routes.js';
 import { createPaymentRoutes } from './payments/routes.js';
 import { createAiCoachRoutes } from './ai-coach/routes.js';
 import { createNotificationRoutes } from './notifications/routes.js';
+import { requireFirebaseAuth as createFirebaseAuthMiddleware } from './marketplace/auth.js';
 import mongo from './config/mongodb.js';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -96,6 +98,10 @@ export function createApp({
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   }));
+  app.use('/exercise-images', express.static(
+    fileURLToPath(new URL('./workouts/exercise-images', import.meta.url)),
+    { maxAge: '1d' },
+  ));
   app.use(express.json({ limit: '10mb', strict: true }));
 
   app.get('/api/health', async (_req, res) => {
@@ -141,7 +147,10 @@ export function createApp({
     primaryFirebaseProjectId,
     supportedFirebaseProjectIds,
   }));
-  app.use('/api/workouts', workoutRoutes);
+  app.use('/api/workouts', workoutRoutesModule.createWorkoutRoutes({
+    authenticate: createFirebaseAuthMiddleware(verifyIdToken, supportedFirebaseProjectIds),
+    getDb,
+  }));
   app.use('/api/diets', dietRoutes);
   app.use('/api/progress', progressRoutes);
   app.use('/api/bmi', bmiRoutes);
