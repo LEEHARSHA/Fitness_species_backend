@@ -77,12 +77,7 @@ const createOrUpdateUser = async (req, res, next) => {
   try {
     const db = getDb();
     const { uid, email, name, provider, firebaseProjectId } = req.user;
-<<<<<<< HEAD
-
-    const filter = { firebaseUid: uid };
-=======
     const filter = getUserIdentityFilter(req.user);
->>>>>>> 4a69327 (fsb)
 
     const setFields = {
       updatedAt: new Date(),
@@ -132,14 +127,7 @@ const createOrUpdateUser = async (req, res, next) => {
 const getCurrentUser = async (req, res, next) => {
   try {
     const db = getDb();
-<<<<<<< HEAD
-    const { uid } = req.user;
-
-    const user = await db.collection('users').findOne({ firebaseUid: uid });
-
-=======
     const user = await db.collection('users').findOne(getUserIdentityFilter(req.user));
->>>>>>> 4a69327 (fsb)
     if (!user) {
       return res.status(404).json({
         success: false,

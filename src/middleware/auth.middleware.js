@@ -1,7 +1,4 @@
-<<<<<<< HEAD
 
-const { verifyFirebaseIdToken } = require('../config/firebase-admin');
-=======
 const { verifyFirebaseIdToken } = require('../config/firebase-admin');
 
 const PRIMARY_PROJECT_ID = 'sellerportal-2786c';
@@ -18,7 +15,6 @@ function getUserIdentityFilter(user) {
     ]
   };
 }
->>>>>>> 4a69327 (fsb)
 
 /**
  * Middleware to verify Firebase ID token.
@@ -44,13 +40,9 @@ const requireFirebaseAuth = async (req, res, next) => {
   }
 
   try {
-<<<<<<< HEAD
     // Verify the token against configured Firebase projects
-    const decodedToken = await verifyFirebaseIdToken(idToken);
-=======
     const decodedToken = await verifyFirebaseIdToken(match[1]);
     const projectId = decodedToken.aud;
->>>>>>> 4a69327 (fsb)
 
     req.user = {
       uid: decodedToken.uid,
@@ -60,13 +52,8 @@ const requireFirebaseAuth = async (req, res, next) => {
         : `${projectId}:${decodedToken.uid}`,
       email: decodedToken.email,
       name: decodedToken.name,
-<<<<<<< HEAD
-      provider: decodedToken.firebase.sign_in_provider,
-      firebaseProjectId: decodedToken.aud,
+      provider: decodedToken.firebase?.sign_in_provider,
       emailVerified: decodedToken.email_verified
-=======
-      provider: decodedToken.firebase?.sign_in_provider
->>>>>>> 4a69327 (fsb)
     };
 
     next();
