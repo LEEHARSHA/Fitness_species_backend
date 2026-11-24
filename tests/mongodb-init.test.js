@@ -76,6 +76,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorPortalNotifications',
     'doctorPortalDailyCapacity',
     'doctorPortalAuditLogs',
+    'notifications',
     'productOrders',
     'payments',
     'paymentWebhookEvents',
@@ -96,6 +97,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'doctorPortalNotifications',
     'doctorPortalOrganizations',
     'doctorPortalStaff',
+    'notifications',
     'paymentWebhookEvents',
     'payments',
     'productOrders',
@@ -185,6 +187,14 @@ test('MongoDB index initialization is repeatable and creates required indexes', 
     index.name === 'doctorPortalNotifications'
     && index.keys.eventKey === 1
     && index.options.unique === true
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'notifications'
+    && index.keys.firebaseProjectId === 1
+    && index.keys.firebaseUid === 1
+    && index.keys.eventKey === 1
+    && index.options.unique === true
+    && index.options.partialFilterExpression.eventKey.$type === 'string'
   )));
 });
 

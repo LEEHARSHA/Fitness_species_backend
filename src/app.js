@@ -182,6 +182,7 @@ export function createApp({
     getDb,
     verifyIdToken,
     primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
   }));
 
   app.use((_req, res) => {

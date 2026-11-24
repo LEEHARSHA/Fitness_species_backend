@@ -335,6 +335,10 @@ test('only an owned, correctly signed, captured payment with matching amount is 
   assert.equal(records.payments[0].status, 'paid');
   assert.equal(records.productOrders[0].paymentStatus, 'paid');
   assert.equal(records.productOrders[0].orderStatus, 'confirmed');
+  assert.equal(records.notifications.length, 1);
+  assert.equal(records.notifications[0].category, 'Orders');
+  assert.equal(records.notifications[0].firebaseProjectId, androidProject);
+  assert.equal(records.notifications[0].targetScreen, 'order_history');
 });
 
 test('appointment payments use the patient Firebase identity and update the held appointment', async () => {
@@ -349,6 +353,8 @@ test('appointment payments use the patient Firebase identity and update the held
     consultationFee: 125,
     currency: 'INR',
     doctorName: 'Dr. Example',
+    appointmentDate: '2026-12-01',
+    appointmentTime: '10:30',
   });
   const controllers = makeControllers();
   const created = await call(controllers.createRazorpayOrder, {
@@ -374,6 +380,9 @@ test('appointment payments use the patient Firebase identity and update the held
   assert.equal(records.doctorPortalAppointments[0].paymentStatus, 'paid');
   assert.equal(records.doctorPortalAppointments[0].razorpayPaymentId, 'pay_appointment_1');
   assert.equal(records.payments[0].status, 'paid');
+  assert.equal(records.notifications.length, 1);
+  assert.equal(records.notifications[0].category, 'Appointments');
+  assert.equal(records.notifications[0].firebaseProjectId, androidProject);
 });
 
 test('a provider amount mismatch cannot mark an order paid', async () => {

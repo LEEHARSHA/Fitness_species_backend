@@ -985,6 +985,16 @@ test('portal booking reserves overlapping slots atomically and hospital appointm
   assert.equal(summary.body.summary.todayAppointments, 2);
   assert.equal(summary.body.summary.byStatus.cancelled, 1);
   assert.equal(summary.body.summary.doctorStats[0].doctorId, doctorId);
+  const unpaidConfirmation = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/status`,
+    { status: 'confirmed' },
+  );
+  assert.equal(unpaidConfirmation.status, 409);
+  assert.equal(unpaidConfirmation.body.code, 'APPOINTMENT_PAYMENT_REQUIRED');
+  records.get('doctorPortalAppointments').find(
+    ({ _id }) => String(_id) === secondBooking.body.appointment.id,
+  ).paymentStatus = 'paid';
   const changed = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/status`, { status: 'confirmed' });
   assert.equal(changed.body.appointment.status, 'confirmed');
   const rescheduled = await auth('hospital')('patch', `/api/doctor-portal/appointments/${secondBooking.body.appointment.id}/reschedule`, {
@@ -1212,6 +1222,15 @@ test('hospital staff invitations grant organization-scoped operational appointme
     403,
   );
 
+  const unpaidConfirmation = await auth('staff')(
+    'patch',
+    `${appointmentsPath}/${firstBooking.body.appointment.id}/status`,
+    { status: 'confirmed' },
+  );
+  assert.equal(unpaidConfirmation.status, 409);
+  records.get('doctorPortalAppointments').find(
+    ({ _id }) => String(_id) === firstBooking.body.appointment.id,
+  ).paymentStatus = 'paid';
   const confirmed = await auth('staff')(
     'patch',
     `${appointmentsPath}/${firstBooking.body.appointment.id}/status`,
@@ -1361,13 +1380,19 @@ test('appointment notifications are scoped to patient, doctor, and hospital reci
   assert.equal(records.get('doctorPortalNotifications').length, 3);
 
   const patientNotifications = await auth('android')('get', '/api/doctor-portal/notifications?unread=true');
+  const mobileNotifications = await auth('android')('get', '/api/notifications');
   const doctorNotifications = await auth('doctor')('get', '/api/doctor-portal/notifications');
   const hospitalNotifications = await auth('hospital')('get', '/api/doctor-portal/notifications');
   assert.equal(patientNotifications.body.total, 1);
+  assert.equal(mobileNotifications.body.total, 1);
+  assert.equal(mobileNotifications.body.notifications[0].category, 'Appointments');
+  assert.equal(mobileNotifications.body.notifications[0].source, 'doctorPortalNotifications');
   assert.equal(doctorNotifications.body.total, 1);
   assert.equal(hospitalNotifications.body.total, 1);
   const patientNotification = patientNotifications.body.notifications[0];
   const doctorNotification = doctorNotifications.body.notifications[0];
+  assert.equal(patientNotification.title, 'Appointment request received');
+  assert.match(patientNotification.body, /Complete payment to secure/);
   assert.equal(
     (await auth('android')(
       'patch',
@@ -1386,6 +1411,13 @@ test('appointment notifications are scoped to patient, doctor, and hospital reci
     0,
   );
 
+  const unpaidConfirmation = await auth('hospital')(
+    'patch',
+    `/api/doctor-portal/appointments/${booked.body.appointment.id}/status`,
+    { status: 'confirmed' },
+  );
+  assert.equal(unpaidConfirmation.status, 409);
+  records.get('doctorPortalAppointments')[0].paymentStatus = 'paid';
   const confirmed = await auth('hospital')(
     'patch',
     `/api/doctor-portal/appointments/${booked.body.appointment.id}/status`,

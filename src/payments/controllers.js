@@ -12,6 +12,7 @@ import {
   verifyGooglePlaySubscriptionSchema,
   verifyRazorpaySignatureSchema,
 } from './validation.js';
+import { createUserNotification } from '../notifications/service.js';
 
 const asyncRoute = (handler) => (req, res, next) => {
   return Promise.resolve(handler(req, res, next)).catch(next);
@@ -513,6 +514,21 @@ export function createPaymentControllers({
         });
         if (!alreadyPaid) return false;
       }
+      const order = await collection('productOrders').findOne({
+        _id: idOf(payment.targetId),
+        ...identity(payment),
+        paymentStatus: 'paid',
+      });
+      if (!order) return false;
+      await createUserNotification(getDb(), {
+        ...identity(payment),
+        eventKey: `shop-order-paid:${order._id}`,
+        title: 'Order confirmed',
+        message: `Payment for order ${order._id} was verified and the order is confirmed.`,
+        category: 'Orders',
+        targetScreen: 'order_history',
+        createdAt: order.paidAt || now,
+      });
     } else if (payment.purpose === 'appointment') {
       const updatedAppointment = await collection('doctorPortalAppointments').updateOne(
         {
@@ -541,6 +557,22 @@ export function createPaymentControllers({
         });
         if (!alreadyPaid) return false;
       }
+      const appointment = await collection('doctorPortalAppointments').findOne({
+        _id: idOf(payment.targetId),
+        ...appointmentIdentity(payment),
+        paymentStatus: 'paid',
+      });
+      if (!appointment) return false;
+      await createUserNotification(getDb(), {
+        firebaseProjectId: payment.firebaseProjectId,
+        firebaseUid: payment.firebaseUid,
+        eventKey: `appointment-payment:${appointment._id}`,
+        title: 'Appointment payment received',
+        message: `Payment for your appointment with ${appointment.doctorName || 'your doctor'} on ${appointment.appointmentDate} at ${appointment.appointmentTime} was verified.`,
+        category: 'Appointments',
+        targetScreen: 'my_appointments',
+        createdAt: appointment.paidAt || now,
+      });
     }
     await collection('payments').updateOne(
       { _id: payment._id, status: { $in: ['created', 'authorized', 'pending'] } },
@@ -1117,7 +1149,7 @@ export function createPaymentControllers({
         { razorpayPaymentId: refundEntity.payment_id, provider: 'razorpay' },
       );
       if (refundedPayment) {
-        await collection('payments').updateOne(
+        const refundUpdate = await collection('payments').updateOne(
           { _id: refundedPayment._id },
           {
             $set: {
@@ -1129,6 +1161,26 @@ export function createPaymentControllers({
             },
           },
         );
+        if (
+          event === 'refund.processed'
+          && refundUpdate.modifiedCount === 1
+          && refundedPayment.purpose === 'shop'
+        ) {
+          const order = await collection('productOrders').findOne({
+            _id: idOf(refundedPayment.targetId),
+            ...identity(refundedPayment),
+          });
+          if (order) {
+            await createUserNotification(getDb(), {
+              ...identity(refundedPayment),
+              eventKey: `shop-order-refund:${order._id}:${refundEntity.id}`,
+              title: 'Order refund processed',
+              message: `The refund for order ${order._id} has been processed.`,
+              category: 'Orders',
+              targetScreen: 'order_history',
+            });
+          }
+        }
       }
     }
     await collection('paymentWebhookEvents').insertOne({ eventId, event, receivedAt: new Date() });

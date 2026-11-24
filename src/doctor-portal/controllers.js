@@ -233,18 +233,33 @@ export function createDoctorPortalControllers({ getDb }) {
     }
 
     const now = new Date();
-    const title = eventType === 'appointment_requested'
-      ? 'New appointment request'
-      : eventType === 'appointment_rescheduled'
-        ? 'Appointment rescheduled'
-        : 'Appointment status updated';
-    const body = eventType === 'appointment_requested'
-      ? `A patient requested an appointment for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
-      : eventType === 'appointment_rescheduled'
-        ? `An appointment was rescheduled to ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
-        : `Appointment status changed to ${appointment.status}.`;
-
     for (const recipient of recipients) {
+      const needsPayment = Number(appointment.consultationFee) > 0
+        && appointment.paymentStatus !== 'paid';
+      const title = recipient.type === 'patient'
+        ? eventType === 'appointment_requested'
+          ? 'Appointment request received'
+          : eventType === 'appointment_rescheduled'
+            ? 'Appointment rescheduled'
+            : `Appointment ${appointment.status}`
+        : eventType === 'appointment_requested'
+          ? 'New appointment request'
+          : eventType === 'appointment_rescheduled'
+            ? 'Appointment rescheduled'
+            : 'Appointment status updated';
+      const body = recipient.type === 'patient'
+        ? eventType === 'appointment_requested'
+          ? needsPayment
+            ? `Complete payment to secure your appointment with ${appointment.doctorName} on ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+            : `Your appointment request with ${appointment.doctorName} was sent for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+          : eventType === 'appointment_rescheduled'
+            ? `Your appointment with ${appointment.doctorName} was rescheduled to ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+            : `Your appointment with ${appointment.doctorName} on ${appointment.appointmentDate} at ${appointment.appointmentTime} is ${appointment.status}.`
+        : eventType === 'appointment_requested'
+          ? `A patient requested an appointment for ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+          : eventType === 'appointment_rescheduled'
+            ? `An appointment was rescheduled to ${appointment.appointmentDate} at ${appointment.appointmentTime}.`
+            : `Appointment status changed to ${appointment.status}.`;
       const eventKey = [
         appointment._id.toString(),
         eventKeySuffix,
@@ -2184,6 +2199,18 @@ export function createDoctorPortalControllers({ getDb }) {
     };
     if (!allowed[current.status]?.includes(parsed.data.status)) {
       res.status(409).json({ success: false, message: `Cannot change appointment status from ${current.status} to ${parsed.data.status}.` });
+      return;
+    }
+    if (
+      parsed.data.status === 'confirmed'
+      && Number(current.consultationFee) > 0
+      && current.paymentStatus !== 'paid'
+    ) {
+      res.status(409).json({
+        success: false,
+        code: 'APPOINTMENT_PAYMENT_REQUIRED',
+        message: 'Verify the appointment payment before confirming this booking.',
+      });
       return;
     }
     const now = new Date();

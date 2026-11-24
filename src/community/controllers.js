@@ -11,6 +11,7 @@ import {
   registrationQuerySchema,
   updateEventSchema,
 } from './validation.js';
+import { createUserNotification } from '../notifications/service.js';
 
 const asyncRoute = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -638,6 +639,19 @@ export function createCommunityControllers({
       }
       throw error;
     }
+    const participantProjectId = req.user.firebaseProjectId || primaryFirebaseProjectId;
+    await createUserNotification(db, {
+      firebaseProjectId: participantProjectId,
+      firebaseUid: req.user.uid,
+      eventKey: `community-registration:${eventId}:${participantProjectId}:${req.user.uid}:${now.getTime()}`,
+      title: 'Community registration confirmed',
+      message: event.pricingType === 'paid'
+        ? `You are registered for ${event.title}. Registration does not confirm payment.`
+        : `You are registered for ${event.title}.`,
+      category: 'Challenges',
+      targetScreen: 'community_home',
+      createdAt: now,
+    });
     res.status(existing ? 200 : 201).json({
       success: true,
       registration: {

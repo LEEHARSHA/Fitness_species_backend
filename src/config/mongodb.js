@@ -23,6 +23,7 @@ const requiredCollections = [
   'doctorPortalNotifications',
   'doctorPortalDailyCapacity',
   'doctorPortalAuditLogs',
+  'notifications',
   'productOrders',
   'payments',
   'paymentWebhookEvents',
@@ -141,6 +142,10 @@ const requiredIndexes = {
     { eventKey: 1 },
     { recipientFirebaseProjectId: 1, recipientFirebaseUid: 1, createdAt: -1 },
   ],
+  notifications: [
+    { firebaseProjectId: 1, firebaseUid: 1, createdAt: -1 },
+    { firebaseProjectId: 1, firebaseUid: 1, eventKey: 1 },
+  ],
   doctorPortalDailyCapacity: [
     { doctorId: 1, appointmentDate: 1 },
   ],
@@ -238,7 +243,12 @@ async function ensureIndexes(database) {
         || (collectionName === 'doctorPortalAppointments' && keys.doctorId && keys.slotKeys)
         || (collectionName === 'doctorPortalConsultations' && keys.appointmentId)
         || (collectionName === 'doctorPortalNotifications' && keys.eventKey)
+        || (collectionName === 'notifications'
+          && keys.firebaseProjectId && keys.firebaseUid && keys.eventKey)
         ? { unique: true }
+        : {}),
+      ...(collectionName === 'notifications' && keys.eventKey
+        ? { partialFilterExpression: { eventKey: { $type: 'string' } } }
         : {}),
     }))
   ));

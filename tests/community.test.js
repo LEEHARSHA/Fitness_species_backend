@@ -104,10 +104,18 @@ class Collection {
     return clone(found);
   }
 
-  async updateOne(query, update) {
-    const found = this.items().find((item) => matches(item, query));
+  async updateOne(query, update, options = {}) {
+    let found = this.items().find((item) => matches(item, query));
+    let inserted = false;
+    if (!found && options.upsert) {
+      found = { _id: new ObjectId() };
+      Object.assign(found, clone(update.$setOnInsert || {}));
+      this.items().push(found);
+      inserted = true;
+    }
     if (!found) return { matchedCount: 0 };
     Object.assign(found, clone(update.$set || {}));
+    if (inserted) Object.assign(found, clone(update.$setOnInsert || {}));
     for (const [key, amount] of Object.entries(update.$inc || {})) {
       found[key] = (found[key] || 0) + amount;
     }
@@ -451,6 +459,11 @@ test('registration requires contact details and persists verified user identity'
   assert.equal(stored.participantName, 'Participant B');
   assert.equal(stored.email, 'b@example.test');
   assert.equal(stored.phone, '+91 9876543210');
+  const notifications = await auth(app, 'user-b').get('/api/notifications');
+  assert.equal(notifications.status, 200);
+  assert.equal(notifications.body.unreadCount, 1);
+  assert.equal(notifications.body.notifications[0].category, 'Challenges');
+  assert.equal(notifications.body.notifications[0].targetScreen, 'community_home');
 });
 
 test('registration enforces duplicate and capacity limits and exposes participant data only to the owner', async () => {
@@ -556,6 +569,17 @@ test('secondary Firebase participants are isolated by project and cannot use org
       { participantUid: 'user-b', participantProjectId: 'project-fitness-species' },
       { participantUid: 'user-b', participantProjectId: 'sellerportal-2786c' },
     ],
+  );
+  const primaryNotifications = await auth(app, 'user-b').get('/api/notifications');
+  const secondaryNotifications = await auth(app, 'android-user-b').get('/api/notifications');
+  assert.equal(primaryNotifications.body.notifications.length, 1);
+  assert.equal(secondaryNotifications.body.notifications.length, 1);
+  assert.equal(primaryNotifications.body.notifications[0].firebaseUid, undefined);
+  assert.equal(
+    records.get('notifications').filter((notification) => (
+      notification.firebaseProjectId === 'sellerportal-2786c'
+    )).length,
+    1,
   );
 
   const primaryHistory = await auth(app, 'user-b').get('/api/community/registrations/mine');
