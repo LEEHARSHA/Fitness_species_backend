@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb';
 import {
   appointmentBookingSchema,
   appointmentQuerySchema,
+  patientAppointmentQuerySchema,
   appointmentRescheduleSchema,
   appointmentSummaryQuerySchema,
   appointmentStatusSchema,
@@ -174,6 +175,25 @@ export function createDoctorPortalControllers({ getDb }) {
     }) => ({ previousDate, previousTime, appointmentDate, appointmentTime, changedAt })),
     createdAt: appointment.createdAt,
     updatedAt: appointment.updatedAt,
+  });
+  const patientAppointmentResponse = (appointment) => ({
+    id: appointment._id.toString(),
+    appointmentId: appointment.appointmentId,
+    doctorId: appointment.doctorId,
+    doctorName: appointment.doctorName,
+    specialization: appointment.doctorSpecialization || '',
+    hospitalName: appointment.organizationName || '',
+    hospitalAddress: appointment.organizationAddress || '',
+    city: appointment.city || '',
+    date: appointment.appointmentDate,
+    time: appointment.appointmentTime,
+    appointmentType: appointment.appointmentType,
+    status: appointment.status,
+    consultationFee: appointment.consultationFee ?? null,
+    currency: appointment.currency || 'INR',
+    paymentStatus: appointment.paymentStatus || 'not_required',
+    paymentExpiresAt: appointment.paymentExpiresAt || null,
+    createdAt: appointment.createdAt,
   });
   const consultationResponse = (consultation) => {
     if (!consultation) return null;
@@ -1755,6 +1775,8 @@ export function createDoctorPortalControllers({ getDb }) {
       doctorSpecialization: provider.primarySpecialty || provider.specialization,
       organizationId: provider.organization?._id || null,
       organizationName: provider.organization?.name || provider.clinicName,
+      organizationAddress: provider.organization?.address || '',
+      city: provider.organization?.city || provider.city || '',
       departmentId: provider.departmentId || null,
       patientFirebaseProjectId: req.user.firebaseProjectId,
       patientFirebaseUid: req.user.uid,
@@ -1842,6 +1864,39 @@ export function createDoctorPortalControllers({ getDb }) {
           ? clean(item)
           : operationalAppointmentResponse(item)
       )),
+      total,
+      page: query.page,
+      limit: query.limit,
+    });
+  });
+
+  const listMyPatientAppointments = asyncRoute(async (req, res) => {
+    const parsed = patientAppointmentQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const query = parsed.data;
+    const filter = {
+      patientFirebaseProjectId: req.user.firebaseProjectId,
+      patientFirebaseUid: req.user.uid,
+    };
+    if (query.from || query.to) {
+      filter.appointmentDate = {
+        ...(query.from ? { $gte: query.from } : {}),
+        ...(query.to ? { $lte: query.to } : {}),
+      };
+    }
+    if (query.status) filter.status = query.status;
+    const appointments = collection('doctorPortalAppointments');
+    const [items, total] = await Promise.all([
+      appointments.find(filter)
+        .sort({ appointmentDate: -1, appointmentTime: -1 })
+        .skip((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .toArray(),
+      appointments.countDocuments(filter),
+    ]);
+    res.json({
+      success: true,
+      appointments: items.map(patientAppointmentResponse),
       total,
       page: query.page,
       limit: query.limit,
@@ -2389,6 +2444,7 @@ export function createDoctorPortalControllers({ getDb }) {
     setConsultationAccess,
     bookAppointment,
     listAppointments,
+    listMyPatientAppointments,
     getAppointmentSummary,
     listPatients,
     listPatientVisits,

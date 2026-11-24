@@ -175,6 +175,17 @@ export const appointmentQuerySchema = z.object({
   message: 'The end date must not precede the start date.',
 });
 
+export const patientAppointmentQuerySchema = z.object({
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  status: z.enum(['requested', 'confirmed', 'completed', 'cancelled', 'no_show']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict().refine((query) => !query.from || !query.to || query.from <= query.to, {
+  path: ['to'],
+  message: 'The end date must not precede the start date.',
+});
+
 export const patientDirectoryQuerySchema = z.object({
   from: z.string().date().optional(),
   to: z.string().date().optional(),

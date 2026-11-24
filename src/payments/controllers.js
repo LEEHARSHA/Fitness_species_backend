@@ -9,6 +9,7 @@ import {
 import {
   adminRefundSchema,
   createRazorpayOrderSchema,
+  myShopOrdersQuerySchema,
   verifyGooglePlaySubscriptionSchema,
   verifyRazorpaySignatureSchema,
 } from './validation.js';
@@ -857,13 +858,24 @@ export function createPaymentControllers({
   });
 
   const getMyShopOrders = asyncRoute(async (req, res) => {
-    const orders = await collection('productOrders')
-      .find(identity(req.user))
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .toArray();
+    const parsed = myShopOrdersQuerySchema.safeParse(req.query);
+    if (!parsed.success) return resultError(res, parsed);
+    const query = parsed.data;
+    const filter = identity(req.user);
+    const [orders, total] = await Promise.all([
+      collection('productOrders')
+        .find(filter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((query.page - 1) * query.limit)
+        .limit(query.limit)
+        .toArray(),
+      collection('productOrders').countDocuments(filter),
+    ]);
     res.json({
       success: true,
+      total,
+      page: query.page,
+      limit: query.limit,
       orders: orders.map((order) => ({
         id: order._id.toString(),
         items: order.items,

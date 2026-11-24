@@ -45,6 +45,7 @@ export function createDoctorPortalRoutes(dependencies) {
   router.get('/notifications', bookingAuthenticate, controllers.listNotifications);
   router.patch('/notifications/:notificationId/read', bookingAuthenticate, controllers.markNotificationRead);
   router.get('/appointments/summary', authenticate, controllers.getAppointmentSummary);
+  router.get('/appointments/mine', bookingAuthenticate, controllers.listMyPatientAppointments);
   router.get('/appointments', authenticate, controllers.listAppointments);
   router.get('/appointments/:appointmentId/consultation', authenticate, controllers.getConsultationRecord);
   router.put('/appointments/:appointmentId/consultation', authenticate, controllers.saveConsultationRecord);

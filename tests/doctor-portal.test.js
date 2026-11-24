@@ -463,6 +463,62 @@ async function createApprovedHospitalDoctor({
 
 test.beforeEach(() => records.clear());
 
+test('patient appointment history is scoped to the authenticated Firebase project and UID', async () => {
+  records.set('doctorPortalAppointments', [
+    {
+      _id: new ObjectId(),
+      appointmentId: 'patient-appointment',
+      patientFirebaseProjectId: primaryProjectId,
+      patientFirebaseUid: 'patient',
+      patientName: 'Patient One',
+      patientContact: 'private-contact',
+      doctorId: 'doctor-a',
+      doctorName: 'Dr. Example',
+      doctorSpecialization: 'Cardiology',
+      organizationName: 'North Hospital',
+      organizationAddress: '10 Market Road',
+      city: 'Pune',
+      appointmentDate: '2025-02-01',
+      appointmentTime: '10:30',
+      appointmentType: 'in_person',
+      status: 'confirmed',
+      consultationFee: 800,
+      currency: 'INR',
+      paymentStatus: 'paid',
+      createdAt: new Date('2025-01-01T10:00:00.000Z'),
+    },
+    {
+      _id: new ObjectId(),
+      appointmentId: 'same-uid-other-project',
+      patientFirebaseProjectId: 'project-fitness-species',
+      patientFirebaseUid: 'patient',
+      appointmentDate: '2025-02-02',
+      appointmentTime: '11:00',
+      status: 'confirmed',
+    },
+    {
+      _id: new ObjectId(),
+      appointmentId: 'other-patient',
+      patientFirebaseProjectId: primaryProjectId,
+      patientFirebaseUid: 'other-patient',
+      appointmentDate: '2025-02-03',
+      appointmentTime: '12:00',
+      status: 'confirmed',
+    },
+  ]);
+
+  const response = await auth('patient')('get', '/api/doctor-portal/appointments/mine');
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total, 1);
+  assert.equal(response.body.appointments.length, 1);
+  assert.equal(response.body.appointments[0].appointmentId, 'patient-appointment');
+  assert.equal(response.body.appointments[0].hospitalAddress, '10 Market Road');
+  assert.equal(response.body.appointments[0].paymentStatus, 'paid');
+  assert.equal('patientContact' in response.body.appointments[0], false);
+  assert.equal('patientName' in response.body.appointments[0], false);
+});
+
 test('separate portal API registers and verifies an organization and its doctors', async () => {
   const unauthenticated = await request(app).get('/api/doctor-portal/organizations/me');
   assert.equal(unauthenticated.status, 401);

@@ -59,6 +59,10 @@ class TestCollection {
     return clone(this.items().find((item) => matches(item, query)) || null);
   }
 
+  async countDocuments(query = {}) {
+    return this.items().filter((item) => matches(item, query)).length;
+  }
+
   async insertOne(document) {
     const stored = clone(document);
     stored._id ||= new ObjectId();
@@ -114,6 +118,10 @@ class TestCollection {
       },
       limit(count) {
         items = items.slice(0, count);
+        return cursor;
+      },
+      skip(count) {
+        items = items.slice(count);
         return cursor;
       },
       async toArray() {
@@ -243,6 +251,45 @@ test('Shop order creation prices approved products on the server and reserves st
   assert.equal(records.productOrders[0].paymentStatus, 'pending');
   assert.equal(records.productOrders[0].orderStatus, 'pending_payment');
   assert.equal(records.payments[0].status, 'created');
+});
+
+test('my shop orders are project-scoped and return the requested page with server status', async () => {
+  records.productOrders = Array.from({ length: 5 }, (_, index) => ({
+    _id: new ObjectId(),
+    firebaseProjectId: androidProject,
+    firebaseUid: 'customer-a',
+    items: [],
+    subtotal: index + 10,
+    deliveryFee: 0,
+    totalAmount: index + 10,
+    currency: 'INR',
+    deliveryAddress: 'Saved address',
+    paymentStatus: index === 0 ? 'pending' : 'paid',
+    orderStatus: index === 0 ? 'pending_payment' : 'confirmed',
+    createdAt: new Date(Date.UTC(2025, 0, index + 1)),
+  }));
+  records.productOrders.push({
+    ...records.productOrders[0],
+    _id: new ObjectId(),
+    firebaseProjectId: primaryProject,
+  });
+  records.productOrders.push({
+    ...records.productOrders[0],
+    _id: new ObjectId(),
+    firebaseUid: 'another-customer',
+  });
+
+  const result = await call(makeControllers().getMyShopOrders, {
+    query: { page: '2', limit: '2' },
+    user: { uid: 'customer-a', firebaseProjectId: androidProject },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.total, 5);
+  assert.equal(result.body.page, 2);
+  assert.equal(result.body.limit, 2);
+  assert.equal(result.body.orders.length, 2);
+  assert.ok(result.body.orders.every((order) => order.orderStatus === 'confirmed'));
 });
 
 test('Shop order retries are idempotent and do not reserve stock twice', async () => {

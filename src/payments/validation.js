@@ -47,6 +47,11 @@ export const verifyGooglePlaySubscriptionSchema = z.object({
   purchaseToken: z.string().min(1).max(4096),
 }).strict();
 
+export const myShopOrdersQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+
 export const adminRefundSchema = z.object({
   paymentId: z.string().min(1).max(100),
   reason: z.string().trim().max(500).optional(),
