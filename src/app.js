@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import workoutRoutes from './routes/workout.routes.js';
+import { createWorkoutSessionRoutes } from './workouts/sessions.js';
 import dietRoutes from './routes/diet.routes.js';
 import progressRoutes from './routes/progress.routes.js';
 import bmiRoutes from './routes/bmi.routes.js';
@@ -134,6 +135,12 @@ export function createApp({
 
   app.use('/api/auth', authRoutes);
   app.use('/api/users', userRoutes);
+  app.use('/api/workouts', createWorkoutSessionRoutes({
+    getDb,
+    verifyIdToken,
+    primaryFirebaseProjectId,
+    supportedFirebaseProjectIds,
+  }));
   app.use('/api/workouts', workoutRoutes);
   app.use('/api/diets', dietRoutes);
   app.use('/api/progress', progressRoutes);

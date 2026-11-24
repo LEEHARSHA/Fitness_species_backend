@@ -81,6 +81,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'payments',
     'paymentWebhookEvents',
     'userSubscriptions',
+    'workoutSessions',
   ]);
   assert.deepEqual([...database.collections].sort(), [
     'communityEvents',
@@ -104,6 +105,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'products',
     'sellerProfiles',
     'userSubscriptions',
+    'workoutSessions',
   ]);
 });
 
@@ -195,6 +197,12 @@ test('MongoDB index initialization is repeatable and creates required indexes', 
     && index.keys.eventKey === 1
     && index.options.unique === true
     && index.options.partialFilterExpression.eventKey.$type === 'string'
+  )));
+  assert.ok(database.indexes.some((index) => (
+    index.name === 'workoutSessions'
+    && index.keys.userId === 1
+    && index.keys.sessionId === 1
+    && index.options.unique === true
   )));
 });
 

@@ -28,6 +28,7 @@ const requiredCollections = [
   'payments',
   'paymentWebhookEvents',
   'userSubscriptions',
+  'workoutSessions',
 ];
 const requiredIndexes = {
   users: [
@@ -66,6 +67,10 @@ const requiredIndexes = {
   workoutPlans: [
     { userId: 1, status: 1 },
     { userId: 1, version: -1 },
+  ],
+  workoutSessions: [
+    { userId: 1, completedAt: -1 },
+    { userId: 1, sessionId: 1 },
   ],
   dietPlans: [
     { userId: 1, status: 1 },
@@ -232,6 +237,7 @@ async function ensureIndexes(database) {
         || (collectionName === 'communityRegistrations'
           && keys.eventId && keys.participantProjectId && keys.participantUid)
         || (collectionName === 'waterLogs' && keys.userId && keys.date)
+        || (collectionName === 'workoutSessions' && keys.userId && keys.sessionId)
         || (collectionName === 'doctorPortalOrganizations'
           && keys.adminFirebaseProjectId && keys.adminFirebaseUid)
         || (collectionName === 'doctorPortalDepartments'
