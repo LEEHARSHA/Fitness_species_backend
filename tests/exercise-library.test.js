@@ -69,22 +69,78 @@ test('every published catalog exercise has a unique ID and a loadable original S
 
   assert.equal(response.status, 200);
   const exercises = response.body.exercises;
-  assert.equal(exercises.length, 15);
+  assert.equal(exercises.length, 86);
   assert.equal(new Set(exercises.map((exercise) => exercise.id)).size, exercises.length);
+  assert.equal(
+    exercises.reduce((count, exercise) => count + exercise.gymProgramming.length, 0),
+    92,
+  );
+  const categoryCounts = exercises
+    .flatMap((exercise) => exercise.gymProgramming)
+    .reduce((counts, prescription) => {
+      counts[prescription.category] = (counts[prescription.category] || 0) + 1;
+      return counts;
+    }, {});
+  assert.deepEqual(categoryCounts, {
+    'Push - Chest': 8,
+    'Push - Shoulders': 6,
+    'Push - Triceps': 5,
+    'Pull - Back': 9,
+    'Pull - Biceps & Forearms': 8,
+    'Pull - Rear Shoulders & Traps': 4,
+    Legs: 16,
+    'Full Body': 12,
+    'Core & Abs': 10,
+    Conditioning: 14,
+  });
   for (const environment of ['Gym', 'Home Workout', 'Calisthenics']) {
     assert.ok(exercises.some((exercise) => exercise.environments.includes(environment)));
   }
 
+  const unverifiedIllustrations = [];
   for (const exercise of exercises) {
     assert.ok(exercise.instructions.length > 0);
+    assert.ok(exercise.targetMuscles.length > 0);
+    assert.ok(exercise.equipmentRequired.length > 0);
+    assert.ok(exercise.gymProgramming.length > 0);
+    for (const prescription of exercise.gymProgramming) {
+      assert.ok(prescription.category);
+      assert.ok(prescription.sets > 0);
+      assert.ok(prescription.reps);
+      assert.ok(prescription.rest);
+    }
     assert.match(exercise.assetLicense, /^Original Fitness Species/);
     const image = await request(app).get(exercise.imageUrl);
     assert.equal(image.status, 200, `${exercise.id} image should be served`);
     assert.match(image.headers['content-type'], /^image\/svg\+xml/);
     const svg = image.body.toString('utf8');
-    assert.match(svg, new RegExp(`<title[^>]*>${exercise.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</title>`));
+    const expectedTitle = new RegExp(`<title[^>]*>${exercise.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</title>`);
+    if (!expectedTitle.test(svg) || !/<(?:path|circle|ellipse|polygon|polyline)\b/i.test(svg)) {
+      unverifiedIllustrations.push(exercise.id);
+    }
     assert.doesNotMatch(svg, /<image\b/i);
   }
+  assert.deepEqual(unverifiedIllustrations, [], 'Every Gym exercise must have matching vector illustration content');
+});
+
+test('squat and bench regression aliases resolve to canonical records without replacing logged loads', () => {
+  const result = exerciseLibrary.enrichWorkoutPlan(null, {
+    Monday: {
+      exercises: [
+        { name: 'Barbell Squat', weight: '52.5 kg', sets: 3, reps: '8' },
+        { name: 'Bench Press', weight: '35 kg', sets: 3, reps: '10' },
+      ],
+    },
+  }, 'Gym');
+  const planned = result.weeklyWorkout.Monday.exercises;
+
+  assert.deepEqual(planned.map((exercise) => exercise.exerciseId), [
+    'barbell-back-squat',
+    'barbell-bench-press',
+  ]);
+  assert.deepEqual(planned.map((exercise) => exercise.weight), ['52.5 kg', '35 kg']);
+  assert.ok(planned.every((exercise) => exercise.startingPosition));
+  assert.ok(planned.every((exercise) => exercise.executionSteps.length >= 3));
 });
 
 test('exercise names are enriched with their matching image and technique instructions', () => {
