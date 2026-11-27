@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="100%" height="100%">
-  <rect width="400" height="300" rx="20" fill="#F8F9FE" stroke="#8E7AFF" stroke-width="2"/>
-  <path d="M 80 230 L 150 230 L 150 180 L 220 180 L 220 130 L 290 130 L 290 80" stroke="#8E7AFF" stroke-width="6" fill="none"/>
-  <circle cx="150" cy="90" r="22" fill="#8E7AFF"/>
-  <path d="M 150 112 L 170 160 M 170 160 L 220 175 M 170 160 L 140 225" stroke="#2D2B55" stroke-width="10" stroke-linecap="round" fill="none"/>
-  <rect x="20" y="250" width="360" height="36" rx="10" fill="#6C5CE7"/>
-  <text x="200" y="273" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">Stair Climbing</text>
-</svg>

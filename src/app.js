@@ -1,5 +1,4 @@
 import express from 'express';
-import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.routes.js';
@@ -98,10 +97,6 @@ export function createApp({
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
   }));
-  app.use('/exercise-images', express.static(
-    fileURLToPath(new URL('./workouts/exercise-images', import.meta.url)),
-    { maxAge: '1d' },
-  ));
   app.use(express.json({ limit: '10mb', strict: true }));
 
   app.get('/api/health', async (_req, res) => {
