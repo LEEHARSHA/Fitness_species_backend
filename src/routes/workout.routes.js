@@ -1,6 +1,11 @@
 const express = require('express');
 const { requireFirebaseAuth } = require('../middleware/auth.middleware');
 const { createWorkoutControllers } = require('../controllers/workout.controller');
+const {
+  getExerciseAsset,
+  getExerciseAvailability,
+  getExerciseCatalog,
+} = require('../workouts/exercise-library.cjs');
 const { z } = require('zod');
 
 const environments = z.enum(['Gym', 'Home Workout', 'Home Workouts', 'Home', 'Calisthenics']);
@@ -119,7 +124,11 @@ function createWorkoutRoutes({
   router.patch('/profile', authenticate, async (req, res, next) => {
     const correlationId = req.correlationId || req.headers['x-correlation-id'] || `req-${Date.now()}`;
     try {
-      const parsed = workoutProfileSchema.safeParse(req.body);
+      const requestProfile = { ...req.body };
+      if (requestProfile.energyLevel) {
+        requestProfile.energyLevel = normalizeEnergyLevel(requestProfile.energyLevel);
+      }
+      const parsed = workoutProfileSchema.safeParse(requestProfile);
       if (!parsed.success) {
         console.warn(`[${correlationId}] PATCH /api/workouts/profile validation failed:`, parsed.error.issues);
         res.status(400).json({
@@ -172,10 +181,14 @@ function createWorkoutRoutes({
   });
 
   router.patch('/energy', authenticate, async (req, res, next) => {
+    const requestBody = { ...req.body };
+    if (requestBody.energyLevel) {
+      requestBody.energyLevel = normalizeEnergyLevel(requestBody.energyLevel);
+    }
     const parsed = z.object({
-      energyLevel: z.string(),
-      energyUpdateDate: z.string().optional(),
-    }).passthrough().safeParse(req.body);
+      energyLevel: energyLevels,
+      energyUpdateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }).strict().safeParse(requestBody);
 
     if (!parsed.success) {
       res.status(400).json({ success: false, message: 'Energy level is invalid.' });
@@ -184,7 +197,7 @@ function createWorkoutRoutes({
 
     try {
       const userId = req.user.databaseUid || req.user.uid;
-      const energyLevel = normalizeEnergyLevel(parsed.data.energyLevel);
+      const energyLevel = parsed.data.energyLevel;
       const energyUpdateDate = parsed.data.energyUpdateDate || new Date().toISOString().split('T')[0];
 
       await getDb().collection('workoutProfiles').updateOne(
@@ -204,31 +217,50 @@ function createWorkoutRoutes({
     }
   });
 
+  router.get('/exercise-images/:assetId', (req, res) => {
+    if (!/^[a-z0-9-]{1,100}$/.test(req.params.assetId)) {
+      res.status(404).json({ success: false, code: 'EXERCISE_IMAGE_UNAVAILABLE' });
+      return;
+    }
+    const assetPath = getExerciseAsset(req.params.assetId);
+    if (!assetPath) {
+      res.status(404).json({ success: false, code: 'EXERCISE_IMAGE_UNAVAILABLE' });
+      return;
+    }
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=604800, immutable').sendFile(assetPath);
+  });
+
   router.get('/exercises', authenticate, (req, res) => {
+    const environment = normalizeEnvironment(req.query.environment);
+    if (environment !== 'Gym') {
+      res.status(200).json({
+        success: true,
+        count: 0,
+        sourceCount: 0,
+        available: false,
+        exercises: [],
+        message: 'No exercise library is available for the selected environment yet.',
+      });
+      return;
+    }
+
+    const availability = getExerciseAvailability();
+    const exercises = getExerciseCatalog();
     res.status(200).json({
       success: true,
-      count: 0,
-      sourceCount: 0,
-      exercises: [],
-      message: 'New workouts coming soon.',
+      count: exercises.length,
+      sourceCount: availability.sourceCount,
+      available: exercises.length > 0,
+      exercises,
+      unavailableExercises: availability.unavailableExercises,
+      message: exercises.length > 0
+        ? null
+        : 'The 42-entry Gym program is recorded, but no exercise currently has both verified metadata and an approved instructional image.',
     });
   });
 
-  router.get('/active', authenticate, (_req, res) => {
-    res.status(200).json({
-      success: true,
-      plan: null,
-      message: 'New workouts coming soon.',
-    });
-  });
-
-  router.post('/generate', authenticate, (_req, res) => {
-    res.status(503).json({
-      success: false,
-      code: 'WORKOUT_GENERATION_DISABLED',
-      message: 'New workouts coming soon.',
-    });
-  });
+  router.get('/active', authenticate, controllers.getActiveWorkout);
+  router.post('/generate', authenticate, controllers.generateWorkoutPlan);
 
   router.get('/history', authenticate, controllers.getWorkoutHistory);
 

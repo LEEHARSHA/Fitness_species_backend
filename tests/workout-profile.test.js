@@ -151,3 +151,19 @@ test('PATCH /api/workouts/profile normalizes energy and environment, and updates
   assert.equal(secondResponse.body.profile.fitnessGoal, 'Cutting');
   assert.equal(secondResponse.body.profile.energyLevel, 'High');
 });
+
+test('PATCH /api/workouts/energy accepts only normalized daily energy values', async () => {
+  const app = makeApp();
+  const response = await authorized(app).patch('/api/workouts/energy').send({
+    energyLevel: 'Low',
+    energyUpdateDate: '2026-11-28',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.energyLevel, 'Low');
+
+  const invalid = await authorized(app).patch('/api/workouts/energy').send({
+    energyLevel: 'Very High',
+  });
+  assert.equal(invalid.status, 400);
+});

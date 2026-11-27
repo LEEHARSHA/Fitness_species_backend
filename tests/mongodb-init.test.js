@@ -82,6 +82,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'paymentWebhookEvents',
     'userSubscriptions',
     'workoutSessions',
+    'workoutProfiles',
   ]);
   assert.deepEqual([...database.collections].sort(), [
     'communityEvents',
@@ -105,6 +106,7 @@ test('MongoDB collection initialization creates required collections idempotentl
     'products',
     'sellerProfiles',
     'userSubscriptions',
+    'workoutProfiles',
     'workoutSessions',
   ]);
 });
