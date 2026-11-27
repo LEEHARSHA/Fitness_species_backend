@@ -48,6 +48,8 @@ function normalizeEnvironment(value) {
   if (!value) return value;
   const str = String(value).trim();
   if (str.toLowerCase() === 'home workouts' || str.toLowerCase() === 'home') return 'Home Workout';
+  if (str.toLowerCase() === 'gym') return 'Gym';
+  if (str.toLowerCase() === 'calisthenics') return 'Calisthenics';
   return str;
 }
 
@@ -88,13 +90,19 @@ function createWorkoutRoutes({
   });
 
   router.patch('/profile', authenticate, async (req, res, next) => {
+    const correlationId = req.correlationId || req.headers['x-correlation-id'] || `req-${Date.now()}`;
     try {
       const parsed = workoutProfileSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
           success: false,
+          code: 'WORKOUT_PROFILE_INVALID',
+          correlationId,
           message: 'Workout profile data is invalid.',
-          details: parsed.error.issues,
+          details: parsed.error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            code: issue.code,
+          })),
         });
         return;
       }
@@ -107,15 +115,6 @@ function createWorkoutRoutes({
       }
       if (profileData.energyLevel) {
         profileData.energyLevel = normalizeEnergyLevel(profileData.energyLevel);
-      }
-      if (profileData.fitnessGoal === 'Recomposition') {
-        profileData.fitnessGoal = 'Recomposition';
-      }
-      if (profileData.trainingEnvironment) {
-        const env = profileData.trainingEnvironment.toLowerCase();
-        if (env === 'gym') profileData.trainingEnvironment = 'Gym';
-        if (env === 'home workout' || env === 'home workouts') profileData.trainingEnvironment = 'Home Workout';
-        if (env === 'calisthenics') profileData.trainingEnvironment = 'Calisthenics';
       }
 
       const update = {
@@ -136,11 +135,13 @@ function createWorkoutRoutes({
         },
         { upsert: true },
       );
+
       if (writeResult?.acknowledged === false) {
         res.status(500).json({
           success: false,
           code: 'WORKOUT_PROFILE_PERSISTENCE_FAILED',
-          message: 'Your workout profile could not be persisted.',
+          correlationId,
+          message: 'Workout profile persistence could not be confirmed.',
         });
         return;
       }
@@ -149,6 +150,15 @@ function createWorkoutRoutes({
         userId,
         firebaseProjectId: req.user.firebaseProjectId,
       });
+      if (!profile) {
+        res.status(500).json({
+          success: false,
+          code: 'WORKOUT_PROFILE_PERSISTENCE_FAILED',
+          correlationId,
+          message: 'Workout profile persistence could not be confirmed.',
+        });
+        return;
+      }
       res.status(200).json({
         success: true,
         profile: profile ? { ...profile, _id: undefined, userId: undefined } : null,
@@ -175,7 +185,7 @@ function createWorkoutRoutes({
       const energyUpdateDate = parsed.data.energyUpdateDate || new Date().toISOString().split('T')[0];
 
       await getDb().collection('workoutProfiles').updateOne(
-        { userId },
+        { userId, firebaseProjectId: req.user.firebaseProjectId },
         {
           $set: {
             energyLevel,

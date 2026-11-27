@@ -29,6 +29,7 @@ const requiredCollections = [
   'paymentWebhookEvents',
   'userSubscriptions',
   'workoutSessions',
+  'workoutProfiles',
 ];
 const requiredIndexes = {
   users: [
@@ -71,6 +72,10 @@ const requiredIndexes = {
   workoutSessions: [
     { userId: 1, completedAt: -1 },
     { userId: 1, sessionId: 1 },
+  ],
+  workoutProfiles: [
+    { firebaseProjectId: 1, userId: 1 },
+    { firebaseProjectId: 1, firebaseUid: 1 },
   ],
   dietPlans: [
     { userId: 1, status: 1 },

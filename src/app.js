@@ -99,6 +99,16 @@ export function createApp({
   }));
   app.use(express.json({ limit: '10mb', strict: true }));
 
+  app.use((req, res, next) => {
+    const supplied = req.get('x-correlation-id');
+    const correlationId = supplied && /^[a-zA-Z0-9._:-]{1,100}$/.test(supplied)
+      ? supplied
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    req.correlationId = correlationId;
+    res.set('X-Correlation-Id', correlationId);
+    next();
+  });
+
   app.get('/api/health', async (_req, res) => {
     let ready = false;
     try {
@@ -200,21 +210,64 @@ export function createApp({
     res.status(404).json({ success: false, message: 'Route not found.' });
   });
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, _next) => {
+    const correlationId = req.correlationId || 'unknown';
+    const category = error?.name === 'MongoServerError'
+      ? 'mongodb_error'
+      : error?.name === 'MongoNetworkError'
+        ? 'mongodb_network_error'
+        : error?.code === 11000
+          ? 'duplicate_profile'
+          : 'unexpected_server_error';
+    const status = error?.statusCode || error?.status || 500;
+    console.error('Request failed:', {
+      correlationId,
+      route: `${req.method} ${req.originalUrl}`,
+      category,
+      status,
+      errorCode: typeof error?.code === 'string' || typeof error?.code === 'number'
+        ? error.code
+        : error?.name || 'UNKNOWN',
+    });
     if (error?.type === 'entity.too.large') {
-      res.status(413).json({ success: false, message: 'Request body is too large.' });
+      res.status(413).json({
+        success: false,
+        code: 'REQUEST_TOO_LARGE',
+        correlationId,
+        message: 'Request body is too large.',
+      });
       return;
     }
     if (error instanceof SyntaxError && 'body' in error) {
-      res.status(400).json({ success: false, message: 'Request body must be valid JSON.' });
+      res.status(400).json({
+        success: false,
+        code: 'INVALID_JSON',
+        correlationId,
+        message: 'Request body must be valid JSON.',
+      });
       return;
     }
     if (error?.message === 'Origin is not allowed by CORS.') {
-      res.status(403).json({ success: false, message: 'Origin is not allowed.' });
+      res.status(403).json({
+        success: false,
+        code: 'ORIGIN_FORBIDDEN',
+        correlationId,
+        message: 'Origin is not allowed.',
+      });
       return;
     }
-    console.error('Request failed:', error?.name || 'Error');
-    res.status(500).json({ success: false, message: 'An unexpected server error occurred.' });
+    res.status(status >= 400 && status < 600 ? status : 500).json({
+      success: false,
+      code: category === 'duplicate_profile'
+        ? 'DUPLICATE_PROFILE'
+        : category === 'mongodb_error'
+          ? 'MONGODB_ERROR'
+          : category === 'mongodb_network_error'
+            ? 'MONGODB_NETWORK_ERROR'
+            : 'UNEXPECTED_SERVER_ERROR',
+      correlationId,
+      message: 'An unexpected server error occurred. Please retry.',
+    });
   });
 
   return app;

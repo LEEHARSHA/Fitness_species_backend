@@ -154,3 +154,44 @@ test('Android Firebase project token can save the exact onboarding case', async 
   assert.equal(response.body.profile.energyLevel, 'Medium');
   assert.equal(response.body.profile.firebaseProjectId, 'project-fitness-species');
 });
+
+test('MongoDB profile write failures return categorized diagnostics', async () => {
+  const app = createApp({
+    getDb: () => ({
+      collection: (name) => name === 'workoutProfiles'
+        ? {
+          async updateOne() {
+            const error = new Error('simulated Mongo write failure');
+            error.name = 'MongoServerError';
+            throw error;
+          },
+        }
+        : {},
+    }),
+    getDbStatus: () => 'connected',
+    verifyIdToken: async () => ({
+      uid: 'mongo-failure-user',
+      aud: 'project-fitness-species',
+      iss: 'https://securetoken.google.com/project-fitness-species',
+    }),
+    primaryFirebaseProjectId: 'sellerportal-2786c',
+    supportedFirebaseProjectIds: ['sellerportal-2786c', 'project-fitness-species'],
+  });
+
+  const response = await request(app)
+    .patch('/api/workouts/profile')
+    .set('Authorization', 'Bearer android-token')
+    .set('X-Correlation-Id', 'workout-profile-test')
+    .send({
+      trainingEnvironment: 'Gym',
+      fitnessGoal: 'Recomposition',
+      healthConditions: ['None'],
+      injuries: ['None'],
+      energyLevel: 'Medium',
+      workoutProfileCompleted: true,
+    });
+
+  assert.equal(response.status, 500);
+  assert.equal(response.body.code, 'MONGODB_ERROR');
+  assert.equal(response.headers['x-correlation-id'], 'workout-profile-test');
+});
