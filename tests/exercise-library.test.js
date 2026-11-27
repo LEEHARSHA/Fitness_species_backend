@@ -3,10 +3,39 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import exerciseLibrary from '../src/workouts/exercise-library.cjs';
 import { createApp } from '../src/app.js';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { buildWorkoutProfileUpdate } = require('../src/routes/workout.routes.js');
 
 test('workout exercise catalog is retired and empty', () => {
   assert.deepEqual(exerciseLibrary.getExerciseCatalog(), []);
   assert.equal(exerciseLibrary.getExerciseAsset('bodyweight-squat'), null);
+});
+
+test('workout profile update has no MongoDB conflicting operator paths', () => {
+  const now = new Date('2026-11-28T00:40:00.000Z');
+  const update = buildWorkoutProfileUpdate({
+    trainingEnvironment: 'Gym',
+    fitnessGoal: 'Recomposition',
+    healthConditions: ['None'],
+    injuries: ['None'],
+    energyLevel: 'Medium',
+    onboardingVersion: 1,
+  }, {
+    uid: 'android-gym-user',
+    databaseUid: 'project-fitness-species:android-gym-user',
+    firebaseProjectId: 'project-fitness-species',
+  }, now);
+
+  const setPaths = Object.keys(update.$set);
+  const insertPaths = Object.keys(update.$setOnInsert);
+  assert.deepEqual(setPaths.filter((path) => insertPaths.includes(path)), []);
+  assert.equal(update.$set.trainingEnvironment, 'Gym');
+  assert.equal(update.$set.fitnessGoal, 'Recomposition');
+  assert.equal(update.$set.updatedAt, now);
+  assert.equal(update.$setOnInsert.createdAt, now);
+  assert.equal(update.$setOnInsert.firebaseProjectId, 'project-fitness-species');
 });
 
 test('workout routes are coming-soon and generation is disabled', async () => {

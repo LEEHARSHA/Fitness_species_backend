@@ -42,7 +42,7 @@ const workoutProfileSchema = z.object({
   exerciseSafetyStatus: z.string().optional(),
   onboardingVersion: z.number().int().min(1).max(100).optional(),
   onboardingCompletedAt: z.union([z.string(), z.number(), z.date()]).optional(),
-}).passthrough();
+}).strict();
 
 function normalizeEnvironment(value) {
   if (!value) return value;
@@ -60,6 +60,33 @@ function normalizeEnergyLevel(value) {
   if (str.toLowerCase().startsWith('medium') || str.toLowerCase().startsWith('med')) return 'Medium';
   if (str.toLowerCase().startsWith('low')) return 'Low';
   return str;
+}
+
+function buildWorkoutProfileUpdate(parsedProfile, reqUser, now) {
+  const immutable = new Set([
+    'userId',
+    'firebaseUid',
+    'firebaseProjectId',
+    'createdAt',
+    '_id',
+  ]);
+  const profileData = Object.fromEntries(
+    Object.entries(parsedProfile).filter(([key]) => !immutable.has(key)),
+  );
+  if (!profileData.onboardingVersion) {
+    profileData.onboardingVersion = 1;
+  }
+  profileData.updatedAt = now;
+
+  return {
+    $set: profileData,
+    $setOnInsert: {
+      userId: reqUser.databaseUid || reqUser.uid,
+      firebaseUid: reqUser.uid,
+      firebaseProjectId: reqUser.firebaseProjectId,
+      createdAt: now,
+    },
+  };
 }
 
 function createWorkoutRoutes({
@@ -94,15 +121,12 @@ function createWorkoutRoutes({
     try {
       const parsed = workoutProfileSchema.safeParse(req.body);
       if (!parsed.success) {
+        console.warn(`[${correlationId}] PATCH /api/workouts/profile validation failed:`, parsed.error.issues);
         res.status(400).json({
           success: false,
           code: 'WORKOUT_PROFILE_INVALID',
-          correlationId,
           message: 'Workout profile data is invalid.',
-          details: parsed.error.issues.map((issue) => ({
-            path: issue.path.join('.'),
-            code: issue.code,
-          })),
+          details: parsed.error.issues,
         });
         return;
       }
@@ -117,34 +141,13 @@ function createWorkoutRoutes({
         profileData.energyLevel = normalizeEnergyLevel(profileData.energyLevel);
       }
 
-      const update = {
-        ...profileData,
-        firebaseProjectId: req.user.firebaseProjectId,
-        updatedAt: now,
-      };
+      const update = buildWorkoutProfileUpdate(profileData, req.user, now);
 
-      const writeResult = await getDb().collection('workoutProfiles').updateOne(
+      await getDb().collection('workoutProfiles').updateOne(
         { userId, firebaseProjectId: req.user.firebaseProjectId },
-        {
-          $set: update,
-          $setOnInsert: {
-            userId,
-            createdAt: now,
-            onboardingVersion: 1,
-          },
-        },
+        update,
         { upsert: true },
       );
-
-      if (writeResult?.acknowledged === false) {
-        res.status(500).json({
-          success: false,
-          code: 'WORKOUT_PROFILE_PERSISTENCE_FAILED',
-          correlationId,
-          message: 'Workout profile persistence could not be confirmed.',
-        });
-        return;
-      }
 
       const profile = await getDb().collection('workoutProfiles').findOne({
         userId,
@@ -232,4 +235,4 @@ function createWorkoutRoutes({
   return router;
 }
 
-module.exports = { createWorkoutRoutes };
+module.exports = { createWorkoutRoutes, buildWorkoutProfileUpdate };
