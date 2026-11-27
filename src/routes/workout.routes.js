@@ -4,6 +4,7 @@ const {
   ExerciseImageValidationError,
   getExerciseCatalog,
 } = require('../workouts/exercise-library.cjs');
+const { getHomeWorkoutCatalog, HOME_WORKOUT_SOURCE_COUNT } = require('../workouts/home-workout-library.cjs');
 const { createWorkoutControllers } = require('../controllers/workout.controller');
 
 function createWorkoutRoutes({
@@ -13,8 +14,19 @@ function createWorkoutRoutes({
   const router = express.Router();
   const controllers = createWorkoutControllers({ getDb });
 
-  router.get('/exercises', authenticate, (_req, res) => {
+  router.get('/exercises', authenticate, (req, res) => {
     try {
+      if (String(req.query.environment || '').trim().toLowerCase() === 'home workout') {
+        const exercises = getHomeWorkoutCatalog();
+        res.status(200).json({
+          success: true,
+          count: HOME_WORKOUT_SOURCE_COUNT,
+          sourceCount: HOME_WORKOUT_SOURCE_COUNT,
+          environment: 'Home Workout',
+          exercises,
+        });
+        return;
+      }
       res.status(200).json({ success: true, exercises: getExerciseCatalog() });
     } catch (error) {
       if (!(error instanceof ExerciseImageValidationError)) throw error;

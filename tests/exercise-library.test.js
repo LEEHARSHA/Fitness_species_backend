@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import request from 'supertest';
 import { ObjectId } from 'mongodb';
 import exerciseLibrary from '../src/workouts/exercise-library.cjs';
+import homeLibrary from '../src/workouts/home-workout-library.cjs';
 import { createApp } from '../src/app.js';
 
 const primaryProject = 'sellerportal-2786c';
@@ -60,6 +61,15 @@ function makeApp() {
     supportedFirebaseProjectIds: [primaryProject],
   });
 }
+
+test('Home Workout source catalog preserves all 113 entries with unique canonical IDs', () => {
+  const catalog = homeLibrary.getHomeWorkoutCatalog();
+  assert.equal(homeLibrary.HOME_WORKOUT_SOURCE_COUNT, 113);
+  assert.equal(catalog.length, 113);
+  assert.equal(new Set(catalog.map((exercise) => exercise.id)).size, 113);
+  assert.ok(catalog.every((exercise) => exercise.environments.includes('Home Workout')));
+  assert.ok(catalog.every((exercise) => exercise.instructions.length > 0));
+});
 
 test('every published catalog exercise has a unique ID and a loadable original SVG', async () => {
   const app = makeApp();
