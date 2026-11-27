@@ -4,6 +4,7 @@ import request from 'supertest';
 import { ObjectId } from 'mongodb';
 import exerciseLibrary from '../src/workouts/exercise-library.cjs';
 import homeLibrary from '../src/workouts/home-workout-library.cjs';
+import gymLibrary from '../src/workouts/gym-workout-library.cjs';
 import { createApp } from '../src/app.js';
 
 const primaryProject = 'sellerportal-2786c';
@@ -61,6 +62,24 @@ function makeApp() {
     supportedFirebaseProjectIds: [primaryProject],
   });
 }
+
+test('Gym Workout source catalog preserves all 92 category entries', () => {
+  assert.equal(gymLibrary.GYM_WORKOUT_SOURCE_COUNT, 92);
+  assert.equal(gymLibrary.gymSourceEntries.length, 92);
+});
+
+test('Gym exercise API returns Gym-specific catalog without exposing Home catalog', async () => {
+  const app = makeApp();
+  const response = await request(app)
+    .get('/api/workouts/exercises?environment=Gym')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.environment, 'Gym');
+  assert.equal(response.body.sourceCount, 92);
+  assert.ok(response.body.exercises.length > 0);
+  assert.ok(response.body.exercises.every((exercise) => exercise.environments.includes('Gym')));
+  assert.ok(response.body.exercises.every((exercise) => exercise.imageUrl));
+});
 
 test('Home Workout source catalog preserves all 113 entries with unique canonical IDs', () => {
   const catalog = homeLibrary.getHomeWorkoutCatalog();

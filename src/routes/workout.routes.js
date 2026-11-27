@@ -5,6 +5,7 @@ const {
   getExerciseCatalog,
 } = require('../workouts/exercise-library.cjs');
 const { getHomeWorkoutCatalog, HOME_WORKOUT_SOURCE_COUNT } = require('../workouts/home-workout-library.cjs');
+const { GYM_WORKOUT_SOURCE_COUNT } = require('../workouts/gym-workout-library.cjs');
 const { createWorkoutControllers } = require('../controllers/workout.controller');
 
 function createWorkoutRoutes({
@@ -23,6 +24,20 @@ function createWorkoutRoutes({
           count: HOME_WORKOUT_SOURCE_COUNT,
           sourceCount: HOME_WORKOUT_SOURCE_COUNT,
           environment: 'Home Workout',
+          exercises,
+        });
+        return;
+      }
+      if (String(req.query.environment || '').trim().toLowerCase() === 'gym') {
+        const exercises = getExerciseCatalog().filter((exercise) =>
+          exercise.environments.includes('Gym')
+        );
+        res.status(200).json({
+          success: true,
+          count: GYM_WORKOUT_SOURCE_COUNT,
+          sourceCount: GYM_WORKOUT_SOURCE_COUNT,
+          uniqueExerciseCount: exercises.length,
+          environment: 'Gym',
           exercises,
         });
         return;
