@@ -3,31 +3,62 @@ const { requireFirebaseAuth } = require('../middleware/auth.middleware');
 const { createWorkoutControllers } = require('../controllers/workout.controller');
 const { z } = require('zod');
 
-const environments = z.enum(['Gym', 'Home Workout', 'Calisthenics']);
+const environments = z.enum(['Gym', 'Home Workout', 'Home Workouts', 'Home', 'Calisthenics']);
 const goals = z.enum(['Bulking', 'Cutting', 'Recomposition', 'Body Recomposition', 'Being Fit']);
-const healthConditions = z.array(z.string().trim().min(1).max(80)).max(30).optional();
-const injuries = z.array(z.string().trim().min(1).max(80)).max(30).optional();
+const energyLevels = z.enum(['High', 'Medium', 'Low']);
+
+const healthConditions = z.array(z.string().trim().min(1).max(120)).max(50).optional();
+const injuries = z.array(z.string().trim().min(1).max(120)).max(50).optional();
 
 const workoutProfileSchema = z.object({
   trainingEnvironment: environments.optional(),
   fitnessGoal: goals.optional(),
+  trainingExperience: z.string().trim().max(100).optional(),
+  trainingDays: z.number().int().min(1).max(7).optional(),
   healthConditions,
   otherHealthCondition: z.string().trim().max(500).optional(),
   injuries,
   otherInjury: z.string().trim().max(500).optional(),
-  injuryStatus: z.enum(['Current', 'Historical']).optional(),
+  injuryStatus: z.string().trim().max(100).optional(),
   injuryRestrictions: z.string().trim().max(500).optional(),
-  injuryClearedToExercise: z.enum([
-    'Professional clearance confirmed',
-    'Not yet confirmed',
-    'Not applicable',
-  ]).optional(),
-  energyLevel: z.enum(['High', 'Medium', 'Low']).optional(),
-  energyUpdateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  onboardingLastCompletedStep: z.number().int().min(0).max(6).optional(),
+  injuryClearedToExercise: z.string().trim().max(100).optional(),
+  availableEquipment: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
+  energyLevel: energyLevels.optional(),
+  energyUpdateDate: z.string().optional(),
+  onboardingLastCompletedStep: z.number().int().min(0).max(10).optional(),
   healthConsent: z.boolean().optional(),
   workoutProfileCompleted: z.boolean().optional(),
-}).strict();
+  calisthenicsPushupAbility: z.string().optional(),
+  calisthenicsPullupAbility: z.string().optional(),
+  calisthenicsLowerBodyAbility: z.string().optional(),
+  preferredSessionDuration: z.string().optional(),
+  calisthenicsSkillsInterested: z.array(z.string()).optional(),
+  homePushupAbility: z.string().optional(),
+  homeLowerBodyAbility: z.string().optional(),
+  gymLiftingExperience: z.string().optional(),
+  gymStrengthHistory: z.string().optional(),
+  gymRecoveryStatus: z.string().optional(),
+  lastUpdated: z.number().optional(),
+  exerciseSafetyStatus: z.string().optional(),
+  onboardingVersion: z.number().int().min(1).max(100).optional(),
+  onboardingCompletedAt: z.union([z.string(), z.number(), z.date()]).optional(),
+}).passthrough();
+
+function normalizeEnvironment(value) {
+  if (!value) return value;
+  const str = String(value).trim();
+  if (str.toLowerCase() === 'home workouts' || str.toLowerCase() === 'home') return 'Home Workout';
+  return str;
+}
+
+function normalizeEnergyLevel(value) {
+  if (!value) return value;
+  const str = String(value).trim();
+  if (str.toLowerCase().startsWith('high')) return 'High';
+  if (str.toLowerCase().startsWith('medium') || str.toLowerCase().startsWith('med')) return 'Medium';
+  if (str.toLowerCase().startsWith('low')) return 'Low';
+  return str;
+}
 
 function createWorkoutRoutes({
   authenticate = requireFirebaseAuth,
@@ -39,7 +70,10 @@ function createWorkoutRoutes({
   router.get('/profile', authenticate, async (req, res, next) => {
     try {
       const userId = req.user.databaseUid || req.user.uid;
-      const profile = await getDb().collection('workoutProfiles').findOne({ userId });
+      const profile = await getDb().collection('workoutProfiles').findOne({
+        userId,
+        firebaseProjectId: req.user.firebaseProjectId,
+      });
       res.status(200).json({
         success: true,
         profile: profile ? {
@@ -57,18 +91,41 @@ function createWorkoutRoutes({
     try {
       const parsed = workoutProfileSchema.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ success: false, message: 'Workout profile data is invalid.' });
+        res.status(400).json({
+          success: false,
+          message: 'Workout profile data is invalid.',
+          details: parsed.error.issues,
+        });
         return;
       }
       const userId = req.user.databaseUid || req.user.uid;
       const now = new Date();
+
+      const profileData = { ...parsed.data };
+      if (profileData.trainingEnvironment) {
+        profileData.trainingEnvironment = normalizeEnvironment(profileData.trainingEnvironment);
+      }
+      if (profileData.energyLevel) {
+        profileData.energyLevel = normalizeEnergyLevel(profileData.energyLevel);
+      }
+      if (profileData.fitnessGoal === 'Recomposition') {
+        profileData.fitnessGoal = 'Recomposition';
+      }
+      if (profileData.trainingEnvironment) {
+        const env = profileData.trainingEnvironment.toLowerCase();
+        if (env === 'gym') profileData.trainingEnvironment = 'Gym';
+        if (env === 'home workout' || env === 'home workouts') profileData.trainingEnvironment = 'Home Workout';
+        if (env === 'calisthenics') profileData.trainingEnvironment = 'Calisthenics';
+      }
+
       const update = {
-        ...parsed.data,
+        ...profileData,
         firebaseProjectId: req.user.firebaseProjectId,
         updatedAt: now,
       };
-      await getDb().collection('workoutProfiles').updateOne(
-        { userId },
+
+      const writeResult = await getDb().collection('workoutProfiles').updateOne(
+        { userId, firebaseProjectId: req.user.firebaseProjectId },
         {
           $set: update,
           $setOnInsert: {
@@ -79,7 +136,19 @@ function createWorkoutRoutes({
         },
         { upsert: true },
       );
-      const profile = await getDb().collection('workoutProfiles').findOne({ userId });
+      if (writeResult?.acknowledged === false) {
+        res.status(500).json({
+          success: false,
+          code: 'WORKOUT_PROFILE_PERSISTENCE_FAILED',
+          message: 'Your workout profile could not be persisted.',
+        });
+        return;
+      }
+
+      const profile = await getDb().collection('workoutProfiles').findOne({
+        userId,
+        firebaseProjectId: req.user.firebaseProjectId,
+      });
       res.status(200).json({
         success: true,
         profile: profile ? { ...profile, _id: undefined, userId: undefined } : null,
@@ -91,26 +160,32 @@ function createWorkoutRoutes({
 
   router.patch('/energy', authenticate, async (req, res, next) => {
     const parsed = z.object({
-      energyLevel: z.enum(['High', 'Medium', 'Low']),
-      energyUpdateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    }).safeParse(req.body);
+      energyLevel: z.string(),
+      energyUpdateDate: z.string().optional(),
+    }).passthrough().safeParse(req.body);
+
     if (!parsed.success) {
       res.status(400).json({ success: false, message: 'Energy level is invalid.' });
       return;
     }
+
     try {
       const userId = req.user.databaseUid || req.user.uid;
+      const energyLevel = normalizeEnergyLevel(parsed.data.energyLevel);
+      const energyUpdateDate = parsed.data.energyUpdateDate || new Date().toISOString().split('T')[0];
+
       await getDb().collection('workoutProfiles').updateOne(
         { userId },
         {
           $set: {
-            energyLevel: parsed.data.energyLevel,
-            energyUpdateDate: parsed.data.energyUpdateDate,
+            energyLevel,
+            energyUpdateDate,
             updatedAt: new Date(),
           },
         },
+        { upsert: true },
       );
-      res.status(200).json({ success: true, ...parsed.data });
+      res.status(200).json({ success: true, energyLevel, energyUpdateDate });
     } catch (error) {
       next(error);
     }
@@ -133,6 +208,7 @@ function createWorkoutRoutes({
       message: 'New workouts coming soon.',
     });
   });
+
   router.post('/generate', authenticate, (_req, res) => {
     res.status(503).json({
       success: false,
@@ -140,6 +216,7 @@ function createWorkoutRoutes({
       message: 'New workouts coming soon.',
     });
   });
+
   router.get('/history', authenticate, controllers.getWorkoutHistory);
 
   return router;

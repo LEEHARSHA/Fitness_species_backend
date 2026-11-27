@@ -96,3 +96,61 @@ test('authenticated workout profile is saved and isolated by UID', async () => {
     .send({ fitnessGoal: 'Invalid Goal' });
   assert.equal(invalid.status, 400);
 });
+
+test('Android Firebase project token can save the exact onboarding case', async () => {
+  let storedProfile = null;
+  const workoutProfiles = {
+    async findOne(query) {
+      if (!storedProfile) return null;
+      if (storedProfile.userId !== query.userId) return null;
+      if (query.firebaseProjectId && storedProfile.firebaseProjectId !== query.firebaseProjectId) return null;
+      return storedProfile;
+    },
+    async updateOne(query, update) {
+      storedProfile = {
+        ...(storedProfile || {}),
+        ...update.$set,
+        ...update.$setOnInsert,
+        userId: query.userId,
+        firebaseProjectId: query.firebaseProjectId,
+      };
+      return { acknowledged: true, matchedCount: 1, upsertedCount: 1 };
+    },
+  };
+  const app = createApp({
+    getDb: () => ({
+      collection: (name) => name === 'workoutProfiles' ? workoutProfiles : {},
+    }),
+    getDbStatus: () => 'connected',
+    verifyIdToken: async () => ({
+      uid: 'android-gym-user',
+      aud: 'project-fitness-species',
+      iss: 'https://securetoken.google.com/project-fitness-species',
+    }),
+    primaryFirebaseProjectId: 'sellerportal-2786c',
+    supportedFirebaseProjectIds: ['sellerportal-2786c', 'project-fitness-species'],
+  });
+
+  const response = await request(app)
+    .patch('/api/workouts/profile')
+    .set('Authorization', 'Bearer android-token')
+    .send({
+      trainingEnvironment: 'Gym',
+      fitnessGoal: 'Recomposition',
+      healthConditions: ['None'],
+      injuries: ['None'],
+      energyLevel: 'Medium',
+      healthConsent: true,
+      workoutProfileCompleted: true,
+      onboardingLastCompletedStep: 6,
+      onboardingVersion: 1,
+      exerciseSafetyStatus: 'No disclosed restrictions',
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.equal(response.body.profile.trainingEnvironment, 'Gym');
+  assert.equal(response.body.profile.fitnessGoal, 'Recomposition');
+  assert.equal(response.body.profile.energyLevel, 'Medium');
+  assert.equal(response.body.profile.firebaseProjectId, 'project-fitness-species');
+});
