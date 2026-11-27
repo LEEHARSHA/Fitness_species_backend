@@ -32,19 +32,26 @@ test('only the exact 42-entry six-day Gym source program is retained', () => {
   assert.equal(inventory.every((exercise) => exercise.metadataStatus === 'unverified'), true);
 });
 
-test('unverified legacy illustrations are not eligible for workout publication', () => {
+test('unapproved exercise drafts remain unavailable for workout publication', () => {
   assert.deepEqual(exerciseLibrary.getExerciseCatalog(), []);
   assert.equal(exerciseLibrary.getExerciseAsset('bodyweight-squat'), null);
-  assert.deepEqual(exerciseLibrary.getExerciseAvailability(), {
-    sourceCount: 42,
-    availableCount: 0,
-    unavailableExercises: getSourceInventory().map(({ id, name, imageStatus, metadataStatus }) => ({
-      id,
-      name,
-      imageStatus,
-      metadataStatus,
-    })),
-  });
+  const availability = exerciseLibrary.getExerciseAvailability();
+  assert.equal(availability.sourceCount, 42);
+  assert.equal(availability.availableCount, 0);
+  assert.equal(availability.imageFilesPresent, 42);
+  assert.equal(availability.approvedImageCount, 0);
+  assert.equal(availability.approvedMetadataCount, 0);
+  assert.equal(availability.unavailableExercises.length, 42);
+  assert.equal(availability.unavailableExercises.every((exercise) => (
+    exercise.imageFilePresent
+    && exercise.imageAssetPath === `drafts/${exercise.id}.svg`
+    && exercise.missingMetadataFields.length === 0
+    && exercise.imageReviewStatus === 'pending_visual_review'
+    && exercise.metadataReviewStatus === 'pending_professional_review'
+    && exercise.missingRequirements.includes('image_license')
+    && exercise.missingRequirements.includes('visual_image_review')
+    && exercise.missingRequirements.includes('professional_metadata_review')
+  )), true);
 });
 
 test('beginner plans use low volume and never invent resistance', () => {
@@ -53,8 +60,11 @@ test('beginner plans use low volume and never invent resistance', () => {
     name: source.name,
     imageStatus: 'verified',
     metadataStatus: 'verified',
+    imageReviewStatus: 'approved',
+    metadataReviewStatus: 'approved',
     imageUrl: `/api/workouts/exercise-images/${source.id}`,
-    assetLicense: 'CC0-1.0',
+    imageLicense: 'Test fixture license',
+    imageSource: 'Test fixture source',
     targetMuscles: ['Target muscle'],
     equipmentRequired: ['Barbell'],
     difficulty: 'beginner',
@@ -81,6 +91,15 @@ test('beginner plans use low volume and never invent resistance', () => {
   assert.equal(monday.exercises.every((exercise) => exercise.weight === 'Weight not set'), true);
   assert.equal(monday.exercises.some((exercise) => /weighted triceps dips/i.test(exercise.name)), false);
   assert.equal(generated.plan.sessions[1].exercises.length, 0);
+
+  const pendingReviewCatalog = catalog.map((exercise) => ({
+    ...exercise,
+    imageReviewStatus: 'pending_visual_review',
+  }));
+  assert.equal(
+    generateGymWeeklyPlan(profile, [], pendingReviewCatalog).error.code,
+    'WORKOUT_CONTENT_UNVERIFIED',
+  );
 
   const historyBased = generateGymWeeklyPlan(profile, [{
     exercises: [{ exerciseName: 'Flat Barbell Bench Press', weight: '60 kg' }],

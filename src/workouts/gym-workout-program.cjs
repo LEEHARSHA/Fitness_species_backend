@@ -84,22 +84,68 @@ const schedule = [
   },
 ];
 
+const canonicalIds = {
+  'Flat Barbell Bench Press': 'barbell-bench-press',
+  'Incline Dumbbell Press': 'incline-dumbbell-press',
+  'Low-to-High Cable Fly': 'low-to-high-cable-fly',
+  'Machine Chest Press (Heavy)': 'machine-chest-press',
+  'Close-Grip Bench Press': 'close-grip-bench-press',
+  'Weighted Triceps Dips': 'weighted-triceps-dips',
+  'Overhead Cable Rope Extension': 'overhead-cable-rope-extension',
+  'Barbell Bent-Over Rows': 'barbell-bent-over-row',
+  'One-Arm Dumbbell Row': 'one-arm-dumbbell-row',
+  'Wide-Grip Lat Pulldown': 'wide-grip-lat-pulldown',
+  'Cable Straight-Arm Pulldown': 'cable-straight-arm-pulldown',
+  'Seated Alternating Dumbbell Curls': 'seated-alternating-dumbbell-curl',
+  'Concentration Curls': 'concentration-curl',
+  'Cable Rope Curls (Burnout)': 'cable-rope-curl',
+  'Front Squats': 'front-squat',
+  'Leg Press (Low Foot Placement)': 'low-foot-leg-press',
+  'Dumbbell Walking Lunges': 'dumbbell-walking-lunge',
+  'Leg Extensions': 'leg-extension',
+  'Seated Dumbbell Shoulder Press': 'seated-dumbbell-shoulder-press',
+  'Cable Lateral Raises (Strict)': 'cable-lateral-raise',
+  'EZ Bar Upright Rows': 'ez-bar-upright-row',
+  'Incline Machine Press': 'incline-machine-press',
+  'Pec Deck Fly': 'pec-deck-fly',
+  'Push-Ups (Feet Elevated / Weighted)': 'feet-elevated-push-up',
+  'Standing Cable Chest Press': 'standing-cable-chest-press',
+  'EZ Bar Skull Crushers': 'ez-bar-skull-crusher',
+  'Single-Arm Cable Pushdowns': 'single-arm-cable-pushdown',
+  'Dumbbell Kickbacks': 'dumbbell-triceps-kickback',
+  'Neutral-Grip Pull-Ups': 'neutral-grip-pull-up',
+  'Cable Seated Rows (Slow Tempo)': 'cable-seated-row',
+  'Chest-Supported T-Bar Rows': 'chest-supported-t-bar-row',
+  'Behind-the-Back Cable Row': 'behind-the-back-cable-row',
+  'Incline Dumbbell Curls': 'incline-dumbbell-curl',
+  'Barbell Curls (Strict Form)': 'barbell-curl',
+  'Reverse EZ Bar Curls': 'reverse-ez-bar-curl',
+  'Romanian Deadlifts (Dumbbell or Barbell)': 'barbell-romanian-deadlift',
+  'Lying Leg Curls': 'lying-leg-curl',
+  'Dumbbell Step-Ups (Glute Focus)': 'dumbbell-step-up',
+  'Cable Glute Kickbacks': 'cable-glute-kickback',
+  'Standing Overhead Barbell Press': 'standing-overhead-barbell-press',
+  'Reverse Pec Deck / Rear Delt Machine': 'reverse-pec-deck',
+  'Dumbbell Lateral Raise Dropset': 'dumbbell-lateral-raise-dropset',
+};
+
+const resolvedExerciseNames = {
+  'Push-Ups (Feet Elevated / Weighted)': 'Feet-Elevated Bodyweight Push-Up',
+  'Romanian Deadlifts (Dumbbell or Barbell)': 'Barbell Romanian Deadlift',
+};
+
 function canonicalId(name) {
-  const specialIds = {
-    'Romanian Deadlifts (Dumbbell or Barbell)': 'romanian-deadlift-variation-unresolved',
-    'Push-Ups (Feet Elevated / Weighted)': 'push-up-variation-unresolved',
-  };
-  return specialIds[name] || name
-    .toLowerCase()
-    .replace(/\+/g, ' plus ')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
+  const id = canonicalIds[name];
+  if (!id) throw new Error(`Missing canonical exercise ID for "${name}".`);
+  return id;
 }
 
 const sourceInventory = schedule.flatMap((session, dayIndex) =>
   session.exercises.map(([name, sets, reps], exerciseIndex) => ({
     id: canonicalId(name),
+    imageAssetId: canonicalId(name),
     name,
+    resolvedName: resolvedExerciseNames[name] || name,
     day: session.day,
     dayIndex,
     focus: session.focus,
@@ -135,8 +181,11 @@ function getMatchingHistory(history, exerciseName) {
 function isExercisePublishable(exercise) {
   return exercise.imageStatus === 'verified'
     && exercise.metadataStatus === 'verified'
+    && exercise.imageReviewStatus === 'approved'
+    && exercise.metadataReviewStatus === 'approved'
     && Boolean(exercise.imageUrl)
-    && Boolean(exercise.assetLicense)
+    && Boolean(exercise.imageLicense)
+    && Boolean(exercise.imageSource)
     && Boolean(exercise.targetMuscles?.length)
     && Boolean(exercise.equipmentRequired?.length)
     && Boolean(exercise.difficulty)
