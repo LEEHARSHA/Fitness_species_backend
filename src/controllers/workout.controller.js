@@ -1,6 +1,7 @@
 const { getDb } = require('../config/mongodb');
 const { getExerciseCatalog } = require('../workouts/exercise-library.cjs');
 const { generateGymWeeklyPlan } = require('../workouts/gym-workout-program.cjs');
+const { evaluateWorkoutSafety } = require('../workouts/workout-safety.cjs');
 
 function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
   function formatPlanResponse(doc) {
@@ -22,14 +23,36 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
     };
   }
 
-  function requiresProfessionalGuidance(profile) {
-    const disclosed = (values) => (values || []).filter(
-      (value) => !/^(none|no|no injuries?|no medical conditions?|prefer not to disclose|not applicable|n\/a)$/i.test(String(value).trim()),
-    );
-    const conditions = disclosed(profile.healthConditions);
-    const injuries = disclosed(profile.injuries);
-    return conditions.some((value) => /heart|cardiac|surgery|recent|pregnan|stroke|uncontrolled/i.test(value))
-      || injuries.length > 0;
+  function profileSnapshotKey(profile = {}) {
+    const list = (value) => (Array.isArray(value) ? [...value].map(String).sort() : []);
+    return JSON.stringify({
+      trainingEnvironment: profile.trainingEnvironment || '',
+      fitnessGoal: profile.fitnessGoal || '',
+      trainingExperience: profile.trainingExperience || profile.gymLiftingExperience || 'Beginner',
+      trainingDays: profile.trainingDays || 3,
+      energyLevel: profile.energyLevel || 'Medium',
+      availableEquipment: list(profile.availableEquipment),
+      healthConditions: list(profile.healthConditions),
+      otherHealthCondition: profile.otherHealthCondition || '',
+      healthConditionStatus: profile.healthConditionStatus || '',
+      healthConditionRestrictions: profile.healthConditionRestrictions || '',
+      healthConditionClearedToExercise: profile.healthConditionClearedToExercise || '',
+      injuries: list(profile.injuries),
+      otherInjury: profile.otherInjury || '',
+      injuryStatus: profile.injuryStatus || '',
+      injuryRestrictions: profile.injuryRestrictions || '',
+      injuryClearedToExercise: profile.injuryClearedToExercise || '',
+    });
+  }
+
+  function safetyResponse(safety) {
+    return {
+      success: false,
+      code: safety.code,
+      safetyStatus: safety.state,
+      message: safety.message,
+      requiredScreening: safety.requiredScreening || [],
+    };
   }
 
   async function generateAndSavePlan(db, userId, firebaseProjectId, profile) {
@@ -44,13 +67,16 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
     if (!generated.plan || !generated.plan.sessions.some((session) => session.exercises.length > 0)) {
       return {
         error: {
-          code: generated.error?.code || 'GENERATION_FAILED',
-          message: generated.error?.message || 'No suitable exercises matched the saved workout profile.',
+          code: generated.safety?.code || 'GENERATION_FAILED',
+          message: generated.safety?.message || 'No suitable exercises matched the saved workout profile.',
         },
       };
     }
 
     const weeklyWorkout = generated.plan;
+    const assignedDaysPerWeek = weeklyWorkout.sessions.filter(
+      (session) => session.exercises.length > 0,
+    ).length;
     const todayIndex = (new Date().getUTCDay() + 6) % 7;
     const now = new Date();
     const current = await db.collection('workoutPlans').findOne({
@@ -66,7 +92,7 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
       environment: 'Gym',
       goal: profile.fitnessGoal || '',
       experience: profile.trainingExperience || profile.gymLiftingExperience || 'Beginner',
-      daysPerWeek: profile.trainingDays || 3,
+      daysPerWeek: assignedDaysPerWeek,
       preferencesSnapshot: profile,
       workout: weeklyWorkout.sessions[todayIndex],
       weeklyWorkout,
@@ -103,19 +129,16 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
       const profile = await db.collection('workoutProfiles').findOne({ userId });
 
       if (!profile || String(profile.trainingEnvironment || '').toLowerCase() !== 'gym') {
-        return res.status(200).json({
-          success: true,
-          plan: null,
+        return res.status(409).json({
+          success: false,
+          code: 'ENVIRONMENT_WORKOUT_UNAVAILABLE',
           message: 'Select Gym in workout preferences to receive a Gym workout plan.',
         });
       }
 
-      if (requiresProfessionalGuidance(profile)) {
-        return res.status(409).json({
-          success: false,
-          code: 'PROFESSIONAL_GUIDANCE_REQUIRED',
-          message: 'Professional guidance is required before assigning a training plan.',
-        });
+      const safety = evaluateWorkoutSafety(profile);
+      if (safety.state !== 'ready') {
+        return res.status(200).json(safetyResponse(safety));
       }
 
       let activePlan = await db.collection('workoutPlans').findOne({
@@ -124,11 +147,30 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
         status: 'active',
       });
 
-      if (!activePlan || !activePlan.weeklyWorkout || !activePlan.weeklyWorkout.sessions?.some(s => s.exercises?.length > 0)) {
+      const planIsCurrent = activePlan
+        && activePlan.weeklyWorkout?.sessions?.some((session) => session.exercises?.length > 0)
+        && profileSnapshotKey(activePlan.preferencesSnapshot) === profileSnapshotKey(profile);
+      if (!planIsCurrent) {
         const generated = await generateAndSavePlan(db, userId, firebaseProjectId, profile);
         if (generated.plan) {
           activePlan = generated.plan;
+        } else {
+          return res.status(503).json({
+            success: false,
+            code: generated.error.code,
+            safetyStatus: 'no_suitable_exercises',
+            message: generated.error.message,
+            requiredScreening: [],
+          });
         }
+      }
+
+      if (!activePlan?.weeklyWorkout?.sessions?.some((session) => session.exercises?.length > 0)) {
+        return res.status(503).json({
+          success: false,
+          code: 'WORKOUT_PLAN_UNAVAILABLE',
+          message: 'A nonempty Gym workout plan could not be confirmed.',
+        });
       }
 
       return res.status(200).json({
@@ -155,12 +197,9 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
         });
       }
 
-      if (requiresProfessionalGuidance(profile)) {
-        return res.status(409).json({
-          success: false,
-          code: 'PROFESSIONAL_GUIDANCE_REQUIRED',
-          message: 'Professional guidance is required before assigning a training plan.',
-        });
+      const safety = evaluateWorkoutSafety(profile);
+      if (safety.state !== 'ready') {
+        return res.status(409).json(safetyResponse(safety));
       }
 
       const generated = await generateAndSavePlan(db, userId, firebaseProjectId, profile);
@@ -168,9 +207,10 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
         return res.status(503).json({
           success: false,
           code: generated.error.code,
-          sourceCount: 42,
-          availableCount: getExerciseCatalog('Gym').length,
+          safetyStatus: 'no_suitable_exercises',
+          sourceCount: getExerciseCatalog('Gym').length,
           message: generated.error.message,
+          requiredScreening: [],
         });
       }
       return res.status(200).json({ success: true, plan: formatPlanResponse(generated.plan) });

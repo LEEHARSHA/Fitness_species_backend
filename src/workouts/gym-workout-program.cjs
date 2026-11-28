@@ -160,6 +160,12 @@ function getSourceInventory() {
 }
 
 function generateGymWeeklyPlan(profile, history = [], catalog = []) {
+  const { buildExerciseSafetyNotes, evaluateWorkoutSafety, isExerciseEligible } = require('./workout-safety.cjs');
+  const safety = evaluateWorkoutSafety(profile);
+  if (safety.state !== 'ready') {
+    return { plan: null, safety };
+  }
+
   if (!catalog || catalog.length === 0) {
     const { getExerciseCatalog } = require('./exercise-library.cjs');
     catalog = getExerciseCatalog('Gym');
@@ -168,130 +174,134 @@ function generateGymWeeklyPlan(profile, history = [], catalog = []) {
   const catalogById = new Map(
     catalog.map((exercise) => [exercise.id, exercise])
   );
-  const recentPerformanceByName = new Map();
-  for (const session of history || []) {
-    for (const result of session.exercises || []) {
-      const name = String(result.exerciseName || '').trim().toLowerCase();
-      const weight = String(result.weight || '').trim();
-      if (
-        name
-        && weight
-        && !/^(not set|starting weight: not set|weight not set)$/i.test(weight)
-        && !recentPerformanceByName.has(name)
-      ) {
-        recentPerformanceByName.set(name, weight);
-      }
-    }
-  }
 
   const experience = (profile?.trainingExperience || profile?.gymLiftingExperience || 'Beginner').trim();
-  const goal = (profile?.fitnessGoal || 'Body Recomposition').trim();
   const energy = (profile?.energyLevel || 'Medium').trim();
   const isBeginner = /beginner/i.test(experience);
   const isLowEnergy = /low/i.test(energy);
-  const requestedTrainingDays = Number(profile?.trainingDays) || (isBeginner ? 3 : 6);
-  const trainingDays = Math.min(6, Math.max(1, isBeginner ? Math.min(requestedTrainingDays, 3) : requestedTrainingDays));
-  const fullBodyBeginnerDays = [
-    ['barbell-bench-press', 'lat-pulldown', 'barbell-back-squat', 'romanian-deadlift'],
-    ['incline-dumbbell-press', 'seated-cable-row', 'leg-press', 'dumbbell-shoulder-press'],
-    ['flat-dumbbell-press', 'one-arm-dumbbell-row', 'walking-lunges', 'dumbbell-biceps-curl'],
-  ];
-  const beginnerSessionDays = [0, 2, 5].slice(0, trainingDays);
-  const selectedEquipment = (profile?.availableEquipment || [])
-    .map((item) => String(item).trim().toLowerCase())
-    .filter(Boolean);
-  const explicitlyNoEquipment = selectedEquipment.some((item) => /^(none|no equipment)$/.test(item));
-  const availableEquipment = selectedEquipment.filter((item) => !/^(none|no equipment|not specified)$/.test(item));
-  const allGymEquipmentAvailable = !explicitlyNoEquipment && (
-    availableEquipment.length === 0
-    || availableEquipment.some((item) => /full gym|suitable gym|all gym|gym equipment/.test(item))
+  const requestedDays = Number.isInteger(profile?.trainingDays) && profile.trainingDays > 0
+    ? Math.min(profile.trainingDays, 6)
+    : 3;
+  const hasActiveInjury = safety.disclosedInjuries.length > 0
+    && !/historical|resolved|past/i.test(String(profile?.injuryStatus || ''));
+  const needsConservativeFrequency = safety.disclosedConditions.some(
+    (condition) => /heart disease|cardiac|recent surgery|pregnan|stroke/i.test(condition),
   );
+  const medicallyRestricted = safety.restrictions.length > 0 || hasActiveInjury || needsConservativeFrequency;
+  let trainingDays = Math.min(requestedDays, isBeginner || medicallyRestricted ? 3 : 6);
+  if (isLowEnergy) trainingDays = Math.min(trainingDays, 2);
 
-  function hasEquipment(exercise) {
-    if (allGymEquipmentAvailable) return true;
-    if (explicitlyNoEquipment) {
-      return (exercise.equipmentRequired || []).every((requirement) =>
-        /^(none|.*optional.*)$/i.test(String(requirement).trim()),
-      );
-    }
-    return (exercise.equipmentRequired || []).every((requirement) => {
-      const options = String(requirement)
-        .replace(/\s*\(optional\)/ig, '')
-        .split(/\s+or\s+/i)
-        .map((option) => option.trim().toLowerCase())
-        .filter((option) => option && option !== 'none');
-      if (options.length === 0) return true;
-      return options.some((option) =>
-        availableEquipment.some((item) => item.includes(option) || option.includes(item)),
-      );
+  const daySelections = {
+    1: [0],
+    2: [0, 3],
+    3: [0, 2, 4],
+    4: [0, 1, 3, 4],
+    5: [0, 1, 2, 4, 5],
+    6: [0, 1, 2, 3, 4, 5],
+  };
+  const activeDayIndexes = new Set(daySelections[trainingDays] || daySelections[3]);
+  const sourceById = new Map(sourceInventory.map((exercise) => [exercise.id, exercise]));
+  const fullBodyTemplates = {
+    0: [
+      ['barbell-bench-press', 'flat-dumbbell-press', 'push-up'],
+      ['lat-pulldown', 'seated-cable-row', 'one-arm-dumbbell-row'],
+      ['leg-press', 'leg-extension', 'hip-thrust', 'lying-leg-curl'],
+      ['dumbbell-lateral-raises', 'dumbbell-shoulder-press', 'front-raises'],
+    ],
+    3: [
+      ['incline-dumbbell-press', 'pec-deck-fly', 'decline-bench-press', 'push-up'],
+      ['seated-cable-row', 'straight-arm-pulldown', 'one-arm-dumbbell-row', 'lat-pulldown'],
+      ['hip-thrust', 'seated-leg-curl', 'lying-leg-curl', 'leg-press'],
+      ['front-raises', 'dumbbell-lateral-raises', 'dumbbell-shoulder-press'],
+    ],
+  };
+  const activeEquipment = Array.isArray(profile?.availableEquipment)
+    ? profile.availableEquipment.map((item) => String(item).toLowerCase())
+    : [];
+  const unrestrictedEquipment = activeEquipment.length === 0
+    || activeEquipment.some((item) => /suitable gym equipment|full gym|all equipment|gym equipment available/.test(item));
+
+  function hasRequiredEquipment(content) {
+    if (unrestrictedEquipment) return true;
+    const required = content?.equipmentRequired || [];
+    if (required.length === 0 || required.every((item) => /^(none|bodyweight)$/i.test(item))) return true;
+    return required.every((item) => {
+      const requiredItem = item.toLowerCase();
+      return activeEquipment.some((available) => (
+        available === requiredItem
+        || available.includes(requiredItem)
+        || requiredItem.includes(available)
+        || (/bench/.test(available) && /bench/.test(requiredItem))
+      ));
     });
   }
 
-  const goalAdjustments = {
-    Bulking: { sets: '4', rest: '120s' },
-    Cutting: { sets: '3-4', reps: '10-15', rest: '60s' },
-    'Body Recomposition': { sets: '3-4', rest: '75s' },
-    Recomposition: { sets: '3-4', rest: '75s' },
-    'Being Fit': { sets: '3', reps: '10-12', rest: '60s' },
-  };
-  const goalConfig = goalAdjustments[goal] || goalAdjustments['Body Recomposition'];
+  function previousUserWeight(exerciseName) {
+    for (const session of history) {
+      const previous = (session.exercises || []).find((item) => (
+        (item.exerciseName || item.name) === exerciseName
+        && typeof item.weight === 'string'
+        && item.weight.trim()
+      ));
+      if (previous) return previous.weight.trim();
+    }
+    return '';
+  }
 
   const sessions = schedule.map((sourceDay, dayIndex) => {
-    function restSession(notes = 'Scheduled recovery day for optimal progress.') {
+    if (dayIndex === 6 || !activeDayIndexes.has(dayIndex)) {
       return {
         name: `${sourceDay.day}: Rest or Active Recovery`,
-        split: 'Rest or Active Recovery',
+        split: trainingDays <= 2 ? 'Rest or Active Recovery' : sourceDay.focus,
         exercises: [],
         duration: '0 min',
         calories: 0,
         difficulty: experience,
-        notes,
+        notes: 'Recovery day based on the saved training frequency.',
       };
     }
-    if (dayIndex === 6) return restSession();
 
-    let sourceExercises = [];
-    let sessionFocus = sourceDay.focus;
-    if (isBeginner) {
-      const beginnerDayIndex = beginnerSessionDays.indexOf(dayIndex);
-      if (beginnerDayIndex >= 0) {
-        sessionFocus = `Full Body ${String.fromCharCode(65 + beginnerDayIndex)}`;
-        const exerciseIds = fullBodyBeginnerDays[beginnerDayIndex];
-        sourceExercises = exerciseIds
-          .map((id) => sourceInventory.find((exercise) => exercise.id === id))
-          .filter(Boolean);
-      }
-    } else if (dayIndex < trainingDays) {
-      sourceExercises = sourceInventory.filter((exercise) => exercise.dayIndex === dayIndex);
-    }
-
-    sourceExercises = sourceExercises
-      .filter(hasEquipment)
-      .filter((source) => catalogById.has(source.id));
-    if (sourceExercises.length === 0) {
-      return restSession('Recovery day or no suitable exercise matched the available equipment.');
-    }
-    if (isLowEnergy) sourceExercises = sourceExercises.slice(0, 4);
+    const maxExercises = isLowEnergy ? 3 : isBeginner ? 4 : 5;
+    const isFullBody = trainingDays <= 2;
+    const sourceExercises = isFullBody
+      ? (fullBodyTemplates[dayIndex] || [])
+        .map((group) => group
+          .map((id) => sourceById.get(id))
+          .find((exercise) => {
+            if (!exercise) return false;
+            const content = catalogById.get(exercise.id);
+            return content && isExerciseEligible(content, safety.restrictions)
+              && hasRequiredEquipment(content);
+          }))
+        .filter(Boolean)
+        .slice(0, maxExercises)
+      : sourceInventory
+        .filter((exercise) => exercise.dayIndex === dayIndex)
+        .filter((exercise) => {
+          const content = catalogById.get(exercise.id);
+          return content && isExerciseEligible(content, safety.restrictions)
+            && hasRequiredEquipment(content);
+        })
+        .slice(0, maxExercises);
 
     const exercises = sourceExercises.map((source) => {
       const content = catalogById.get(source.id);
-      const sets = isBeginner || isLowEnergy
-        ? '2'
-        : (goalConfig.sets || String(source.sourceSets || 3));
-      const reps = isBeginner
-        ? '8-12'
-        : (goalConfig.reps || String(source.sourceReps || '10-12'));
-      const rest = goalConfig.rest || content?.defaultRest || '90s';
+      const sets = isLowEnergy || isBeginner ? '2' : '3';
+      const reps = isBeginner ? '8-12' : String(source.sourceReps || '8-12');
+      const goal = String(profile?.fitnessGoal || '');
+      const defaultRest = /bulking/i.test(goal) ? '120s' : /cutting|being fit/i.test(goal) ? '75s' : '90s';
+      const rest = content?.restInterval || defaultRest;
+      const safetyNotes = buildExerciseSafetyNotes(content, safety);
 
       return {
         name: source.name,
         exerciseId: source.id,
-        imageUrl: content?.imageUrl || '',
+        imageUrl: content?.imageUrl || null,
         sets,
         reps,
-        weight: recentPerformanceByName.get(source.name.toLowerCase()) || '',
+        weight: previousUserWeight(source.name),
         rest,
-        notes: content?.safetyNotes || 'Focus on strict form and controlled contraction.',
+        notes: safetyNotes,
         targetMuscles: content?.targetMuscles || [content?.targetMuscle || 'Full Body'],
         secondaryMuscles: content?.secondaryMuscles || [],
         equipmentRequired: content?.equipmentRequired || ['None'],
@@ -300,20 +310,37 @@ function generateGymWeeklyPlan(profile, history = [], catalog = []) {
         startingPosition: content?.startingPosition || 'Standard starting stance',
         executionSteps: content?.executionSteps || [],
         commonMistakes: content?.commonMistakes || [],
-        safetyNotes: content?.safetyNotes || 'Maintain proper form and core engagement.',
+        safetyNotes,
+        alternatives: content?.alternatives || [],
       };
     });
 
+    const focus = trainingDays <= 2
+      ? `Full Body ${dayIndex === 0 ? 'A' : 'B'}`
+      : sourceDay.focus;
     return {
-      name: `${sourceDay.day}: ${sessionFocus}`,
-      split: sessionFocus,
+      name: `${sourceDay.day}: ${focus}`,
+      split: focus,
       exercises,
       duration: `${Math.max(20, exercises.length * 7)} min`,
-      calories: 0,
+      calories: isBeginner ? 280 : 380,
       difficulty: experience,
-      notes: `Day ${dayIndex + 1}: ${sessionFocus}`,
+      notes: `Day ${dayIndex + 1}: ${focus}`,
     };
   });
+
+  if (!sessions.some((session) => session.exercises.length > 0)) {
+    return {
+      plan: null,
+      safety: {
+        state: 'no_suitable_exercises',
+        code: 'NO_SUITABLE_EXERCISES',
+        message: 'The available Gym catalog has no exercises compatible with the saved equipment and movement restrictions.',
+        requiredScreening: [],
+        restrictions: safety.restrictions,
+      },
+    };
+  }
 
   return {
     plan: {
@@ -321,6 +348,7 @@ function generateGymWeeklyPlan(profile, history = [], catalog = []) {
       sessions,
       generatedDate: Date.now(),
     },
+    safety,
   };
 }
 

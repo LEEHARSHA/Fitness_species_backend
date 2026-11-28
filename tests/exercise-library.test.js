@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { buildWorkoutProfileUpdate } = require('../src/routes/workout.routes.js');
+const { evaluateWorkoutSafety } = require('../src/workouts/workout-safety.cjs');
 const {
   generateGymWeeklyPlan,
   getProgramSchedule,
@@ -64,7 +65,7 @@ test('all 42 source entries have complete metadata and only available image URLs
   )), true);
 });
 
-test('beginner programming is low-volume, full-body, and independent of image/licensing metadata', () => {
+test('beginner programming follows the Gym split on three recovery-spaced days', () => {
   const catalog = exerciseLibrary.getExerciseCatalog('Gym').map(({ imageUrl, ...exercise }) => exercise);
   const profile = {
     fitnessGoal: 'Recomposition',
@@ -74,6 +75,9 @@ test('beginner programming is low-volume, full-body, and independent of image/li
     energyLevel: 'Medium',
     healthConsent: true,
     healthConditions: ['None'],
+    healthConditionStatus: 'Stable',
+    healthConditionRestrictions: '',
+    healthConditionClearedToExercise: 'Not applicable',
     injuries: ['None'],
   };
   const generated = generateGymWeeklyPlan(profile, [], catalog);
@@ -85,17 +89,176 @@ test('beginner programming is low-volume, full-body, and independent of image/li
   assert.equal(monday.exercises.some((exercise) => /weighted triceps dips/i.test(exercise.name)), false);
   assert.equal(generated.plan.sessions[1].exercises.length, 0);
   assert.equal(generated.plan.sessions[2].exercises.length, 4);
-  assert.equal(generated.plan.sessions[4].exercises.length, 0);
-  assert.equal(generated.plan.sessions[5].exercises.length, 4);
+  assert.equal(generated.plan.sessions[3].exercises.length, 0);
+  assert.equal(generated.plan.sessions[4].exercises.length, 4);
+  assert.equal(generated.plan.sessions[5].exercises.length, 0);
   assert.deepEqual(
     generated.plan.sessions.filter((session) => session.exercises.length > 0).map((session) => session.split),
-    ['Full Body A', 'Full Body B', 'Full Body C'],
+    ['Chest + Triceps', 'Legs + Shoulders', 'Back + Biceps — Different variations'],
   );
   assert.equal(generated.plan.sessions.flatMap((session) => session.exercises).length, 12);
   const historyBased = generateGymWeeklyPlan(profile, [{
     exercises: [{ exerciseName: 'Barbell Bench Press', weight: '40 kg' }],
   }], catalog);
   assert.equal(historyBased.plan.sessions[0].exercises[0].weight, '40 kg');
+});
+
+test('one- and two-day schedules use balanced full-body sessions instead of dropping muscle groups', () => {
+  const catalog = exerciseLibrary.getExerciseCatalog('Gym');
+  const profile = {
+    trainingEnvironment: 'Gym',
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Beginner',
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Medium',
+    healthConditions: ['None'],
+    injuries: ['None'],
+  };
+  const oneDay = generateGymWeeklyPlan({ ...profile, trainingDays: 1 }, [], catalog).plan;
+  assert.equal(oneDay.sessions[0].split, 'Full Body A');
+  assert.equal(oneDay.sessions[0].exercises.length, 4);
+  assert.equal(oneDay.sessions.flatMap((session) => session.exercises).length, 4);
+
+  const twoDays = generateGymWeeklyPlan({ ...profile, trainingDays: 2 }, [], catalog).plan;
+  assert.deepEqual(
+    twoDays.sessions.filter((session) => session.exercises.length > 0).map((session) => session.split),
+    ['Full Body A', 'Full Body B'],
+  );
+  assert.equal(twoDays.sessions[0].exercises.length, 4);
+  assert.equal(twoDays.sessions[3].exercises.length, 4);
+});
+
+test('condition-aware screening combines restrictions without blocking stable conditions', () => {
+  const catalog = exerciseLibrary.getExerciseCatalog('Gym');
+  const base = {
+    trainingEnvironment: 'Gym',
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Intermediate',
+    trainingDays: 6,
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Medium',
+  };
+  const cases = [
+    { healthConditions: ['Obesity'], injuries: ['None'] },
+    { healthConditions: ['Type 2 Diabetes'], healthConditionStatus: 'Stable', injuries: ['None'] },
+    { healthConditions: ['High Blood Pressure'], healthConditionStatus: 'Stable', injuries: ['None'] },
+    { healthConditions: ['PCOS'], injuries: ['None'] },
+    { healthConditions: ['None'], injuries: ['Shoulder Injury'], injuryStatus: 'Historical' },
+  ];
+
+  for (const health of cases) {
+    const result = generateGymWeeklyPlan({ ...base, trainingDays: 3, ...health }, [], catalog);
+    assert.ok(result.plan, JSON.stringify(health));
+    assert.ok(result.plan.sessions.flatMap((session) => session.exercises).length > 0);
+  }
+
+  const kneeProfile = {
+    ...base,
+    healthConditions: ['Knee Pain'],
+    healthConditionStatus: 'Stable',
+    healthConditionRestrictions: 'Avoid deep knee flexion',
+    injuries: ['None'],
+  };
+  const kneePlan = generateGymWeeklyPlan(kneeProfile, [], catalog).plan;
+  const kneeExercises = kneePlan.sessions.flatMap((session) => session.exercises);
+  assert.ok(kneeExercises.length > 0);
+  assert.ok(kneePlan.sessions.filter((session) => session.exercises.length > 0).length <= 3);
+  assert.equal(kneeExercises.some((exercise) => /squat|lunge|leg press|leg extension/i.test(exercise.name)), false);
+
+  const backProfile = {
+    ...base,
+    healthConditions: ['None'],
+    injuries: ['Low Back Pain'],
+    injuryStatus: 'Current',
+    injuryRestrictions: 'Avoid deadlift and bent-over rowing',
+  };
+  const backPlan = generateGymWeeklyPlan(backProfile, [], catalog).plan;
+  const backExercises = backPlan.sessions.flatMap((session) => session.exercises);
+  assert.ok(backExercises.length > 0);
+  assert.ok(backPlan.sessions.filter((session) => session.exercises.length > 0).length <= 3);
+  assert.equal(backExercises.some((exercise) => /deadlift|bent-over row|t-bar row|one-arm dumbbell row/i.test(exercise.name)), false);
+
+  const combinedPlan = generateGymWeeklyPlan({
+    ...kneeProfile,
+    healthConditions: ['Knee Pain', 'Shoulder Injury'],
+    healthConditionRestrictions: 'Avoid deep knee flexion and overhead pressing',
+  }, [], catalog).plan;
+  const combinedExercises = combinedPlan.sessions.flatMap((session) => session.exercises);
+  assert.ok(combinedExercises.length > 0);
+  assert.equal(combinedExercises.some((exercise) => /squat|lunge|leg press|leg extension|press|fly|raise|dip/i.test(exercise.name)), false);
+
+  const conditionAndInjuryPlan = generateGymWeeklyPlan({
+    ...base,
+    healthConditions: ['Type 2 Diabetes'],
+    healthConditionStatus: 'Stable',
+    injuries: ['Low Back Pain'],
+    injuryStatus: 'Current',
+    injuryRestrictions: 'Avoid deadlift and bent-over rowing',
+  }, [], catalog).plan;
+  assert.ok(conditionAndInjuryPlan.sessions.flatMap((session) => session.exercises).length > 0);
+  assert.equal(conditionAndInjuryPlan.sessions.flatMap((session) => session.exercises)
+    .some((exercise) => /deadlift|bent-over row|t-bar row|one-arm dumbbell row/i.test(exercise.name)), false);
+});
+
+test('screening distinguishes missing information from conditions requiring clearance', () => {
+  const missingInjuryInfo = evaluateWorkoutSafety({
+    healthConditions: ['None'],
+    injuries: ['Knee Pain'],
+  });
+  assert.equal(missingInjuryInfo.state, 'screening_required');
+  assert.equal(missingInjuryInfo.code, 'INJURY_SCREENING_REQUIRED');
+
+  const recentSurgery = evaluateWorkoutSafety({
+    healthConditions: ['Recent Surgery'],
+    healthConditionStatus: 'Stable',
+    injuries: ['None'],
+  });
+  assert.equal(recentSurgery.state, 'clearance_required');
+  assert.equal(recentSurgery.code, 'PROFESSIONAL_CLEARANCE_REQUIRED');
+
+  const clearedRehab = evaluateWorkoutSafety({
+    healthConditions: ['None'],
+    injuries: ['ACL Rehabilitation'],
+    injuryStatus: 'Current',
+    injuryRestrictions: 'Avoid knee flexion beyond prescribed limit',
+    injuryClearedToExercise: 'Professional clearance confirmed',
+  });
+  assert.equal(clearedRehab.state, 'ready');
+  assert.ok(clearedRehab.restrictions.includes('knee'));
+
+  const rehabilitationPlan = generateGymWeeklyPlan({
+    trainingExperience: 'Beginner',
+    trainingDays: 6,
+    energyLevel: 'Medium',
+    availableEquipment: ['Suitable gym equipment available'],
+    healthConditions: ['None'],
+    injuries: ['ACL Rehabilitation'],
+    injuryStatus: 'Active Rehabilitation',
+    injuryRestrictions: 'Avoid knee flexion beyond the prescribed limit',
+    injuryClearedToExercise: 'Professional clearance confirmed',
+  }).plan;
+  assert.ok(rehabilitationPlan.sessions.flatMap((session) => session.exercises).length > 0);
+  assert.equal(rehabilitationPlan.sessions.flatMap((session) => session.exercises)
+    .some((exercise) => /squat|lunge|leg press|leg extension/i.test(exercise.name)), false);
+});
+
+test('low energy reduces session frequency and missing images remain non-blocking', () => {
+  const catalogWithoutImages = exerciseLibrary.getExerciseCatalog('Gym')
+    .map(({ imageUrl, ...exercise }) => exercise);
+  const lowEnergyPlan = generateGymWeeklyPlan({
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Beginner',
+    trainingDays: 3,
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Low',
+    healthConditions: ['None'],
+    injuries: ['None'],
+  }, [], catalogWithoutImages).plan;
+  const activeSessions = lowEnergyPlan.sessions.filter((session) => session.exercises.length > 0);
+  assert.equal(activeSessions.length, 2);
+  assert.equal(activeSessions.every((session) => session.exercises.length <= 3), true);
+  assert.ok(activeSessions.flatMap((session) => session.exercises).every((exercise) => exercise.weight === ''));
+  assert.ok(activeSessions.flatMap((session) => session.exercises).every((exercise) => !exercise.imageUrl));
 });
 
 test('workout profile update has no MongoDB conflicting operator paths', () => {
@@ -202,7 +365,7 @@ test('Gym API returns eligible exercises with images optional and no fabricated 
   assert.equal(assigned.length, 12);
   assert.deepEqual(
     generated.body.plan.weeklyWorkout.sessions.map((session) => session.exercises.length),
-    [4, 0, 4, 0, 0, 4, 0],
+    [4, 0, 4, 0, 4, 0, 0],
   );
   assert.ok(assigned.every((exercise) => exercise.exerciseId && exercise.name));
   assert.ok(assigned.every((exercise) => exercise.targetMuscles.length > 0));
@@ -213,6 +376,38 @@ test('Gym API returns eligible exercises with images optional and no fabricated 
   assert.ok(assigned.some((exercise) => !exercise.imageUrl));
   assert.ok(database.workoutPlans[0]);
   assert.equal(database.workoutPlans[0].weeklyWorkout.sessions.flatMap((session) => session.exercises).length, 12);
+
+  database.workoutProfiles[0].healthConditions = ['Type 2 Diabetes'];
+  database.workoutProfiles[0].healthConditionStatus = 'Stable';
+  const diabeticWorkout = await request(app)
+    .post('/api/workouts/generate')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(diabeticWorkout.status, 200);
+  assert.equal(diabeticWorkout.body.success, true);
+  assert.equal(diabeticWorkout.body.plan.daysPerWeek, 3);
+  assert.ok(diabeticWorkout.body.plan.weeklyWorkout.sessions.flatMap((session) => session.exercises).length > 0);
+  assert.ok(
+    diabeticWorkout.body.plan.weeklyWorkout.sessions
+      .flatMap((session) => session.exercises)
+      .every((exercise) => exercise.safetyNotes.includes("Follow your clinician's guidance")),
+  );
+  assert.equal(database.workoutPlans[0].preferencesSnapshot.healthConditionStatus, 'Stable');
+
+  database.workoutProfiles[0].healthConditions = ['None'];
+  database.workoutProfiles[0].healthConditionStatus = '';
+  database.workoutProfiles[0].injuries = ['Knee Pain'];
+  database.workoutProfiles[0].injuryStatus = 'Current';
+  database.workoutProfiles[0].injuryRestrictions = 'Avoid deep knee flexion';
+  const restrictedInjuryWorkout = await request(app)
+    .post('/api/workouts/generate')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(restrictedInjuryWorkout.status, 200);
+  assert.equal(restrictedInjuryWorkout.body.success, true);
+  const injuryExercises = restrictedInjuryWorkout.body.plan.weeklyWorkout.sessions
+    .flatMap((session) => session.exercises);
+  assert.ok(injuryExercises.length > 0);
+  assert.equal(injuryExercises.some((exercise) => /squat|lunge|leg press|leg extension/i.test(exercise.name)), false);
+  assert.equal(database.workoutPlans[0].preferencesSnapshot.injuryRestrictions, 'Avoid deep knee flexion');
 
   const homeCatalog = await request(app)
     .get('/api/workouts/exercises')
@@ -297,9 +492,23 @@ test('opening Workouts creates and persists a plan when one does not exist', asy
   const restrictedPlan = await request(app)
     .get('/api/workouts/active')
     .set('Authorization', 'Bearer valid');
-  assert.equal(restrictedPlan.status, 409);
+  assert.equal(restrictedPlan.status, 200);
   assert.equal(restrictedPlan.body.success, false);
-  assert.equal(restrictedPlan.body.code, 'PROFESSIONAL_GUIDANCE_REQUIRED');
+  assert.equal(restrictedPlan.body.code, 'INJURY_SCREENING_REQUIRED');
+  assert.equal(restrictedPlan.body.safetyStatus, 'screening_required');
+  assert.ok(restrictedPlan.body.requiredScreening.includes('injuryStatus'));
+
+  profile.injuries = ['None'];
+  profile.healthConditions = ['Recent Surgery'];
+  profile.healthConditionStatus = 'Stable';
+  const clearanceRequired = await request(app)
+    .post('/api/workouts/generate')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(clearanceRequired.status, 409);
+  assert.equal(clearanceRequired.body.success, false);
+  assert.equal(clearanceRequired.body.code, 'PROFESSIONAL_CLEARANCE_REQUIRED');
+  assert.equal(clearanceRequired.body.plan, undefined);
+  assert.ok(clearanceRequired.body.requiredScreening.includes('healthConditionClearedToExercise'));
 });
 
 test('authenticated workout profile is saved and isolated by UID', async () => {
@@ -400,6 +609,8 @@ test('Android Firebase project token can save the exact onboarding case', async 
       trainingEnvironment: 'Gym',
       fitnessGoal: 'Recomposition',
       healthConditions: ['None'],
+      healthConditionStatus: 'Stable',
+      healthConditionClearedToExercise: 'Not applicable',
       injuries: ['None'],
       energyLevel: 'Medium',
       healthConsent: true,
@@ -414,6 +625,7 @@ test('Android Firebase project token can save the exact onboarding case', async 
   assert.equal(response.body.profile.trainingEnvironment, 'Gym');
   assert.equal(response.body.profile.fitnessGoal, 'Recomposition');
   assert.equal(response.body.profile.energyLevel, 'Medium');
+  assert.equal(response.body.profile.healthConditionStatus, 'Stable');
   assert.equal(response.body.profile.firebaseProjectId, 'project-fitness-species');
 });
 
