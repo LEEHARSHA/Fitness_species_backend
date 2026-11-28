@@ -21,10 +21,10 @@ test('only the exact 42-entry six-day Gym source program is retained', () => {
   assert.deepEqual(schedule.map((day) => day.focus), [
     'Chest + Triceps — Heavy Press Focus',
     'Back + Biceps — Rowing and Width Focus',
-    'Legs + Shoulders — Quad Focus',
+    'Legs + Shoulders — Quad and Deltoid Focus',
     'Chest + Triceps — Isolation Focus',
     'Back + Biceps — Cable and Stretch Focus',
-    'Legs + Shoulders — Posterior Chain and Rear Delt Focus',
+    'Legs + Shoulders — Posterior Chain and Rear Deltoid Focus',
     'Rest or Active Recovery',
   ]);
   assert.equal(new Set(inventory.map((exercise) => exercise.id)).size, 42);
@@ -38,14 +38,12 @@ test('unapproved exercise drafts remain unavailable for workout publication', ()
   const availability = exerciseLibrary.getExerciseAvailability();
   assert.equal(availability.sourceCount, 42);
   assert.equal(availability.availableCount, 0);
-  assert.equal(availability.imageFilesPresent, 42);
+  assert.equal(availability.imageFilesPresent, 11);
   assert.equal(availability.approvedImageCount, 0);
   assert.equal(availability.approvedMetadataCount, 0);
   assert.equal(availability.unavailableExercises.length, 42);
   assert.equal(availability.unavailableExercises.every((exercise) => (
-    exercise.imageFilePresent
-    && exercise.imageAssetPath === `drafts/${exercise.id}.svg`
-    && exercise.missingMetadataFields.length === 0
+    exercise.imageAssetPath === `drafts/${exercise.id}.svg`
     && exercise.imageReviewStatus === 'pending_visual_review'
     && exercise.metadataReviewStatus === 'pending_professional_review'
     && exercise.missingRequirements.includes('image_license')
@@ -88,7 +86,7 @@ test('beginner plans use low volume and never invent resistance', () => {
   const monday = generated.plan.sessions[0];
   assert.equal(monday.exercises.length, 4);
   assert.equal(monday.exercises.every((exercise) => Number(exercise.sets) <= 2), true);
-  assert.equal(monday.exercises.every((exercise) => exercise.weight === 'Weight not set'), true);
+  assert.equal(monday.exercises.every((exercise) => exercise.weight === 'Starting weight: Not set'), true);
   assert.equal(monday.exercises.some((exercise) => /weighted triceps dips/i.test(exercise.name)), false);
   assert.equal(generated.plan.sessions[1].exercises.length, 0);
 

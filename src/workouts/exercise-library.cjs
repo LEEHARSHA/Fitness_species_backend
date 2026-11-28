@@ -92,7 +92,10 @@ function getExerciseAvailability() {
   const unavailableExercises = inventory.map((source) => {
     const record = recordsById.get(source.id);
     const imageAssetId = record?.imageAssetId || source.imageAssetId;
-    const assetPath = record ? getReviewAssetPath(record) : null;
+    const draftAssetPath = path.resolve(imageDirectory, 'drafts', `${imageAssetId}.svg`);
+    const assetPath = record
+      ? getReviewAssetPath(record)
+      : (draftAssetPath.startsWith(`${path.resolve(imageDirectory, 'drafts')}${path.sep}`) ? draftAssetPath : null);
     const imageFilePresent = assetPath !== null && fs.existsSync(assetPath);
     const missingMetadataFields = requiredMetadataFields.filter(
       (field) => !hasMetadataValue(record || {}, field),
@@ -113,7 +116,7 @@ function getExerciseAvailability() {
       sourceName: source.name,
       day: source.day,
       imageAssetId,
-      imageAssetPath: record?.imageAssetPath || null,
+      imageAssetPath: record?.imageAssetPath || `drafts/${imageAssetId}.svg`,
       imageFilePresent,
       imageStatus: record?.imageStatus || 'pending_review',
       metadataStatus: record?.metadataStatus || 'pending_review',

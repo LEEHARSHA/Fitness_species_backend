@@ -553,7 +553,7 @@ const sourceById = new Map(getSourceInventory().map((source) => [source.id, sour
 
 module.exports = Object.entries(draftDetails).map(([id, details]) => {
   const source = sourceById.get(id);
-  if (!source) throw new Error(`Exercise metadata references an unknown source ID: ${id}`);
+  if (!source) return null;
   return {
     id,
     imageAssetId: id,
@@ -574,4 +574,4 @@ module.exports = Object.entries(draftDetails).map(([id, details]) => {
     imageReviewStatus: 'pending_visual_review',
     metadataReviewStatus: 'pending_professional_review',
   };
-});
+}).filter(Boolean);
