@@ -4,6 +4,7 @@ const { getSourceInventory } = require('./gym-workout-program.cjs');
 const exerciseContent = require('./gym-exercise-content.cjs');
 
 const imageDirectory = path.resolve(__dirname, 'exercise-images');
+const approvedImageDirectory = path.resolve(imageDirectory, 'approved');
 const requiredMetadataFields = [
   'targetMuscles',
   'secondaryMuscles',
@@ -16,18 +17,8 @@ const requiredMetadataFields = [
   'safetyNotes',
   'restInterval',
   'resistanceType',
+  'breathing',
 ];
-
-class ExerciseImageValidationError extends Error {
-  constructor(message, options = {}) {
-    super(message);
-    this.name = 'ExerciseImageValidationError';
-    this.code = options.code || 'WORKOUT_LIBRARY_EMPTY';
-    this.missingExercises = options.missingExercises || [];
-    this.unavailableAssets = options.unavailableAssets || [];
-    this.unsupportedExercises = options.unsupportedExercises || [];
-  }
-}
 
 function hasValue(value) {
   if (Array.isArray(value)) return value.length > 0;
@@ -35,42 +26,33 @@ function hasValue(value) {
 }
 
 function hasMetadataValue(exercise, field) {
-  if (field === 'secondaryMuscles') return Array.isArray(exercise[field]);
+  if (field === 'secondaryMuscles' || field === 'commonMistakes') {
+    return Array.isArray(exercise[field]);
+  }
   return hasValue(exercise[field]);
 }
 
-function getReviewAssetPath(exercise) {
-  const assetPath = path.resolve(imageDirectory, exercise.imageAssetPath || `${exercise.imageAssetId}.svg`);
-  return assetPath.startsWith(`${imageDirectory}${path.sep}`) ? assetPath : null;
-}
-
-function getAssetPath(exercise) {
-  const assetPath = getReviewAssetPath(exercise);
-  if (!assetPath) return null;
-  const relativePath = path.relative(imageDirectory, assetPath);
-  return relativePath.startsWith(`approved${path.sep}`) ? assetPath : null;
-}
-
-function isExercisePublishable(exercise) {
-  const metadataComplete = requiredMetadataFields.every((field) => hasMetadataValue(exercise, field));
-  const assetPath = getAssetPath(exercise);
-  return metadataComplete
-    && exercise.imageStatus === 'verified'
-    && exercise.metadataStatus === 'verified'
-    && exercise.imageReviewStatus === 'approved'
-    && exercise.metadataReviewStatus === 'approved'
-    && hasValue(exercise.imageUrl)
-    && hasValue(exercise.imageSource)
-    && hasValue(exercise.imageLicense)
-    && assetPath !== null
-    && fs.existsSync(assetPath);
+function getApprovedAssetPath(id) {
+  if (!/^[a-z0-9-]{1,100}$/.test(id)) return null;
+  const assetPath = path.resolve(approvedImageDirectory, `${id}.svg`);
+  if (!assetPath.startsWith(`${approvedImageDirectory}${path.sep}`)) return null;
+  return fs.existsSync(assetPath) ? assetPath : null;
 }
 
 function getExerciseCatalog(environment) {
   if (environment && String(environment).trim().toLowerCase() !== 'gym') return [];
   return exerciseContent
-    .filter(isExercisePublishable)
-    .map((exercise) => ({ ...exercise }));
+    .filter((exercise) => requiredMetadataFields.every((field) => hasMetadataValue(exercise, field)))
+    .map((exercise) => {
+      const { imageAssetPath, ...exerciseDetails } = exercise;
+      const imageAvailable = getApprovedAssetPath(exercise.id) !== null;
+      return {
+        ...exerciseDetails,
+        imageAssetPath: imageAvailable ? `approved/${exercise.id}.svg` : null,
+        imageUrl: imageAvailable ? `/api/workouts/exercise-images/${exercise.id}` : null,
+        imageAvailable,
+      };
+    });
 }
 
 function enrichWorkoutPlan(workout = null, weeklyWorkout = null) {
@@ -81,67 +63,38 @@ function enrichWorkoutPlan(workout = null, weeklyWorkout = null) {
 }
 
 function getExerciseAsset(id) {
-  const exercise = getExerciseCatalog('Gym').find((entry) => entry.id === id);
-  if (!exercise) return null;
-  return getAssetPath(exercise);
+  return getApprovedAssetPath(id);
 }
 
 function getExerciseAvailability() {
   const inventory = getSourceInventory();
-  const recordsById = new Map(exerciseContent.map((exercise) => [exercise.id, exercise]));
+  const catalog = getExerciseCatalog('Gym');
+  const recordsById = new Map(catalog.map((exercise) => [exercise.id, exercise]));
   const unavailableExercises = inventory.map((source) => {
     const record = recordsById.get(source.id);
-    const imageAssetId = record?.imageAssetId || source.imageAssetId;
-    const draftAssetPath = path.resolve(imageDirectory, 'drafts', `${imageAssetId}.svg`);
-    const assetPath = record
-      ? getReviewAssetPath(record)
-      : (draftAssetPath.startsWith(`${path.resolve(imageDirectory, 'drafts')}${path.sep}`) ? draftAssetPath : null);
-    const imageFilePresent = assetPath !== null && fs.existsSync(assetPath);
     const missingMetadataFields = requiredMetadataFields.filter(
       (field) => !hasMetadataValue(record || {}, field),
     );
-    const missingRequirements = [
-      ...(!record ? ['metadata_record'] : []),
-      ...missingMetadataFields.map((field) => `metadata:${field}`),
-      ...(!imageFilePresent ? ['canonical_image_file'] : []),
-      ...(!hasValue(record?.imageUrl) ? ['image_url'] : []),
-      ...(!hasValue(record?.imageSource) ? ['image_source'] : []),
-      ...(!hasValue(record?.imageLicense) ? ['image_license'] : []),
-      ...(record?.imageReviewStatus !== 'approved' ? ['visual_image_review'] : []),
-      ...(record?.metadataReviewStatus !== 'approved' ? ['professional_metadata_review'] : []),
-    ];
+    const imageAvailable = record?.imageAvailable === true;
     return {
       id: source.id,
-      name: source.resolvedName,
-      sourceName: source.name,
+      name: source.name,
       day: source.day,
-      imageAssetId,
-      imageAssetPath: record?.imageAssetPath || `drafts/${imageAssetId}.svg`,
-      imageFilePresent,
-      imageStatus: record?.imageStatus || 'pending_review',
-      metadataStatus: record?.metadataStatus || 'pending_review',
-      imageReviewStatus: record?.imageReviewStatus || 'pending_visual_review',
-      metadataReviewStatus: record?.metadataReviewStatus || 'pending_professional_review',
-      imageSource: record?.imageSource || null,
-      imageLicense: record?.imageLicense || null,
+      imageAvailable,
       imageUrl: record?.imageUrl || null,
       missingMetadataFields,
-      missingRequirements,
     };
   });
-  const approvedCatalog = getExerciseCatalog('Gym');
+
   return {
     sourceCount: inventory.length,
-    availableCount: approvedCatalog.length,
-    imageFilesPresent: unavailableExercises.filter((exercise) => exercise.imageFilePresent).length,
-    approvedImageCount: approvedCatalog.filter((exercise) => exercise.imageReviewStatus === 'approved').length,
-    approvedMetadataCount: approvedCatalog.filter((exercise) => exercise.metadataReviewStatus === 'approved').length,
-    unavailableExercises,
+    availableCount: catalog.length,
+    imageFilesPresent: unavailableExercises.filter((exercise) => exercise.imageAvailable).length,
+    unavailableExercises: unavailableExercises.filter((exercise) => exercise.missingMetadataFields.length > 0),
   };
 }
 
 module.exports = {
-  ExerciseImageValidationError,
   enrichWorkoutPlan,
   getExerciseAsset,
   getExerciseAvailability,

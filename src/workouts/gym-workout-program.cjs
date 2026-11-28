@@ -1,7 +1,7 @@
 const schedule = [
   {
     day: 'Monday',
-    focus: 'Chest + Triceps — Heavy Press Focus',
+    focus: 'Chest + Triceps',
     exercises: [
       ['Barbell Bench Press', 3, '8–12'],
       ['Incline Dumbbell Press', 3, '10–12'],
@@ -14,7 +14,7 @@ const schedule = [
   },
   {
     day: 'Tuesday',
-    focus: 'Back + Biceps — Rowing and Width Focus',
+    focus: 'Back + Biceps',
     exercises: [
       ['Deadlift', 3, '5–8'],
       ['Lat Pulldown', 3, '10–12'],
@@ -27,7 +27,7 @@ const schedule = [
   },
   {
     day: 'Wednesday',
-    focus: 'Legs + Shoulders — Quad and Deltoid Focus',
+    focus: 'Legs + Shoulders',
     exercises: [
       ['Barbell Squat', 3, '8–12'],
       ['Leg Press', 3, '10–12'],
@@ -40,7 +40,7 @@ const schedule = [
   },
   {
     day: 'Thursday',
-    focus: 'Chest + Triceps — Isolation Focus',
+    focus: 'Chest + Triceps — Different variations',
     exercises: [
       ['Decline Bench Press', 3, '8–12'],
       ['Pec Deck Fly', 3, '12–15'],
@@ -53,7 +53,7 @@ const schedule = [
   },
   {
     day: 'Friday',
-    focus: 'Back + Biceps — Cable and Stretch Focus',
+    focus: 'Back + Biceps — Different variations',
     exercises: [
       ['Barbell Bent-Over Row', 3, '8–12'],
       ['T-Bar Row', 3, '8–12'],
@@ -66,7 +66,7 @@ const schedule = [
   },
   {
     day: 'Saturday',
-    focus: 'Legs + Shoulders — Posterior Chain and Rear Deltoid Focus',
+    focus: 'Legs + Shoulders — Different variations',
     exercises: [
       ['Hack Squat', 3, '10–12'],
       ['Walking Lunges', 3, '10 each side'],
@@ -144,9 +144,6 @@ const sourceInventory = schedule.flatMap((session, dayIndex) =>
     sourceOrder: exerciseIndex + 1,
     sourceSets: sets,
     sourceReps: reps,
-    imageStatus: 'unverified',
-    metadataStatus: 'unverified',
-    imageUrl: null,
   })),
 );
 
@@ -162,97 +159,85 @@ function getSourceInventory() {
   return sourceInventory.map((exercise) => ({ ...exercise }));
 }
 
-function isExercisePublishable(exercise) {
-  if (!exercise) return false;
-  return Boolean(exercise.id) && Boolean(exercise.name) && Boolean(exercise.imageUrl);
-}
-
 function generateGymWeeklyPlan(profile, history = [], catalog = []) {
-  const exerciseContent = require('./gym-exercise-content.cjs');
-  const contentById = new Map(exerciseContent.map((entry) => [entry.id, entry]));
-
-  const catalogById = new Map((Array.isArray(catalog) ? catalog : [])
-    .filter((entry) => entry
-      && entry.id
-      && entry.imageStatus === 'verified'
-      && entry.metadataStatus === 'verified'
-      && entry.imageReviewStatus === 'approved'
-      && entry.metadataReviewStatus === 'approved')
-    .map((entry) => [entry.id, entry]));
-
-  if (catalogById.size === 0) {
-    return {
-      error: {
-        code: 'WORKOUT_CONTENT_UNVERIFIED',
-        message: 'The 42-entry Gym program is recorded, but no exercise currently has both verified metadata and an approved instructional image.',
-      },
-    };
+  if (!catalog || catalog.length === 0) {
+    const { getExerciseCatalog } = require('./exercise-library.cjs');
+    catalog = getExerciseCatalog('Gym');
   }
 
-  const experience = (profile?.trainingExperience || profile?.gymLiftingExperience || 'Intermediate').trim();
+  const catalogById = new Map(
+    catalog.map((exercise) => [exercise.id, exercise])
+  );
+  const recentPerformanceByName = new Map();
+  for (const session of history || []) {
+    for (const result of session.exercises || []) {
+      const name = String(result.exerciseName || '').trim().toLowerCase();
+      const weight = String(result.weight || '').trim();
+      if (
+        name
+        && weight
+        && !/^(not set|starting weight: not set|weight not set)$/i.test(weight)
+        && !recentPerformanceByName.has(name)
+      ) {
+        recentPerformanceByName.set(name, weight);
+      }
+    }
+  }
+
+  const experience = (profile?.trainingExperience || profile?.gymLiftingExperience || 'Beginner').trim();
   const goal = (profile?.fitnessGoal || 'Body Recomposition').trim();
   const energy = (profile?.energyLevel || 'Medium').trim();
   const isBeginner = /beginner/i.test(experience);
-  const healthConditions = Array.isArray(profile?.healthConditions) ? profile.healthConditions : [];
-  const injuries = Array.isArray(profile?.injuries) ? profile.injuries : [];
-  const hasNoneConditions = healthConditions.length === 0
-    || (healthConditions.length === 1 && healthConditions[0] === 'None');
-  const hasNoneInjuries = injuries.length === 0
-    || (injuries.length === 1 && injuries[0] === 'None');
-  const needsSafetyScreening = !hasNoneConditions || !hasNoneInjuries;
+  const isLowEnergy = /low/i.test(energy);
+  const requestedTrainingDays = Number(profile?.trainingDays) || (isBeginner ? 3 : 6);
+  const trainingDays = Math.min(6, Math.max(1, isBeginner ? Math.min(requestedTrainingDays, 3) : requestedTrainingDays));
+  const fullBodyBeginnerDays = [
+    ['barbell-bench-press', 'lat-pulldown', 'barbell-back-squat', 'romanian-deadlift'],
+    ['incline-dumbbell-press', 'seated-cable-row', 'leg-press', 'dumbbell-shoulder-press'],
+    ['flat-dumbbell-press', 'one-arm-dumbbell-row', 'walking-lunges', 'dumbbell-biceps-curl'],
+  ];
+  const beginnerSessionDays = [0, 2, 5].slice(0, trainingDays);
+  const selectedEquipment = (profile?.availableEquipment || [])
+    .map((item) => String(item).trim().toLowerCase())
+    .filter(Boolean);
+  const explicitlyNoEquipment = selectedEquipment.some((item) => /^(none|no equipment)$/.test(item));
+  const availableEquipment = selectedEquipment.filter((item) => !/^(none|no equipment|not specified)$/.test(item));
+  const allGymEquipmentAvailable = !explicitlyNoEquipment && (
+    availableEquipment.length === 0
+    || availableEquipment.some((item) => /full gym|suitable gym|all gym|gym equipment/.test(item))
+  );
 
-  // Goal-based adjustments
+  function hasEquipment(exercise) {
+    if (allGymEquipmentAvailable) return true;
+    if (explicitlyNoEquipment) {
+      return (exercise.equipmentRequired || []).every((requirement) =>
+        /^(none|.*optional.*)$/i.test(String(requirement).trim()),
+      );
+    }
+    return (exercise.equipmentRequired || []).every((requirement) => {
+      const options = String(requirement)
+        .replace(/\s*\(optional\)/ig, '')
+        .split(/\s+or\s+/i)
+        .map((option) => option.trim().toLowerCase())
+        .filter((option) => option && option !== 'none');
+      if (options.length === 0) return true;
+      return options.some((option) =>
+        availableEquipment.some((item) => item.includes(option) || option.includes(item)),
+      );
+    });
+  }
+
   const goalAdjustments = {
-    Bulking: { setsModifier: 0, restModifier: 30, focusNote: 'Prioritize progressive overload and recovery.' },
-    Cutting: { setsModifier: 0, restModifier: -15, focusNote: 'Maintain strength training intensity; manage fatigue.' },
-    'Body Recomposition': { setsModifier: 0, restModifier: 0, focusNote: 'Balance strength progression with conditioning.' },
-    Recomposition: { setsModifier: 0, restModifier: 0, focusNote: 'Balance strength progression with conditioning.' },
-    'Being Fit': { setsModifier: -1, restModifier: -15, focusNote: 'Focus on general fitness and sustainable consistency.' },
+    Bulking: { sets: '4', rest: '120s' },
+    Cutting: { sets: '3-4', reps: '10-15', rest: '60s' },
+    'Body Recomposition': { sets: '3-4', rest: '75s' },
+    Recomposition: { sets: '3-4', rest: '75s' },
+    'Being Fit': { sets: '3', reps: '10-12', rest: '60s' },
   };
   const goalConfig = goalAdjustments[goal] || goalAdjustments['Body Recomposition'];
 
-  const trainingDays = Number.isInteger(profile?.trainingDays)
-    ? Math.max(1, Math.min(6, profile.trainingDays))
-    : 6;
-  const beginnerTrainingDays = new Set([0, 2, 4].slice(0, Math.min(trainingDays, 3)));
-
-  // Exercises a beginner should avoid or substitute
-  const beginnerExclude = new Set([
-    'chest-dips', 'triceps-dips', 'deadlift',
-  ]);
-
-  // Exercises requiring safety screening if conditions/injuries present
-  const conditionSensitive = new Set([
-    'barbell-back-squat', 'deadlift', 'barbell-bench-press',
-    'decline-bench-press', 'barbell-bent-over-row',
-  ]);
-
-  function parseRestSeconds(restStr) {
-    const match = String(restStr || '90').match(/(\d+)/);
-    return match ? parseInt(match[1], 10) : 90;
-  }
-
-  function formatRest(seconds) {
-    return seconds >= 120 ? `${Math.round(seconds / 60)} min` : `${seconds}s`;
-  }
-
-  // Determine how many exercises per day a beginner should do
-  const beginnerMaxExercises = 4;
-
   const sessions = schedule.map((sourceDay, dayIndex) => {
-    if (dayIndex === 6) {
-      return {
-        name: 'Sunday: Rest or Active Recovery',
-        split: 'Rest or Active Recovery',
-        exercises: [],
-        duration: '0 min',
-        calories: 0,
-        difficulty: experience,
-        notes: 'Scheduled recovery day.',
-      };
-    }
-
-    if (isBeginner && !beginnerTrainingDays.has(dayIndex)) {
+    function restSession(notes = 'Scheduled recovery day for optimal progress.') {
       return {
         name: `${sourceDay.day}: Rest or Active Recovery`,
         split: 'Rest or Active Recovery',
@@ -260,85 +245,73 @@ function generateGymWeeklyPlan(profile, history = [], catalog = []) {
         duration: '0 min',
         calories: 0,
         difficulty: experience,
-        notes: 'Scheduled recovery day for beginner volume management.',
+        notes,
       };
     }
+    if (dayIndex === 6) return restSession();
 
-    let sourceExercises = sourceInventory.filter((exercise) => exercise.dayIndex === dayIndex);
-    sourceExercises = sourceExercises.filter((exercise) => catalogById.has(exercise.id));
-
-    // Filter for beginner
+    let sourceExercises = [];
+    let sessionFocus = sourceDay.focus;
     if (isBeginner) {
-      sourceExercises = sourceExercises.filter((ex) => !beginnerExclude.has(ex.id));
-      sourceExercises = sourceExercises.slice(0, beginnerMaxExercises);
+      const beginnerDayIndex = beginnerSessionDays.indexOf(dayIndex);
+      if (beginnerDayIndex >= 0) {
+        sessionFocus = `Full Body ${String.fromCharCode(65 + beginnerDayIndex)}`;
+        const exerciseIds = fullBodyBeginnerDays[beginnerDayIndex];
+        sourceExercises = exerciseIds
+          .map((id) => sourceInventory.find((exercise) => exercise.id === id))
+          .filter(Boolean);
+      }
+    } else if (dayIndex < trainingDays) {
+      sourceExercises = sourceInventory.filter((exercise) => exercise.dayIndex === dayIndex);
     }
 
+    sourceExercises = sourceExercises
+      .filter(hasEquipment)
+      .filter((source) => catalogById.has(source.id));
+    if (sourceExercises.length === 0) {
+      return restSession('Recovery day or no suitable exercise matched the available equipment.');
+    }
+    if (isLowEnergy) sourceExercises = sourceExercises.slice(0, 4);
+
     const exercises = sourceExercises.map((source) => {
-      const content = contentById.get(source.id);
-      const baseSets = source.sourceSets || 3;
-      const adjustedSets = Math.max(1, baseSets + goalConfig.setsModifier + (isBeginner ? -1 : 0));
-      const baseRestSec = content ? parseRestSeconds(content.restInterval) : 90;
-      const adjustedRest = Math.max(30, baseRestSec + goalConfig.restModifier);
-
-      const loggedExercise = history.find((session) => (
-        (session.exercises || []).some((exercise) => {
-          const name = String(exercise.exerciseName || exercise.name || '').toLowerCase();
-          return name.includes(source.name.toLowerCase())
-            || name.includes(source.id.replace(/-/g, ' '))
-            || source.name.toLowerCase().includes(name);
-        })
-      ));
-      const loggedWeightEntry = loggedExercise
-        ? (loggedExercise.exercises || []).find((exercise) => {
-          const name = String(exercise.exerciseName || exercise.name || '').toLowerCase();
-          return name.includes(source.name.toLowerCase())
-            || name.includes(source.id.replace(/-/g, ' '))
-            || source.name.toLowerCase().includes(name);
-        })
-        : null;
-      const loggedWeight = loggedWeightEntry?.weight
-        && loggedWeightEntry.weight !== 'Starting weight: Not set'
-        ? loggedWeightEntry.weight
-        : 'Starting weight: Not set';
-
-      const requiresScreening = needsSafetyScreening && conditionSensitive.has(source.id);
-      const safetyNote = requiresScreening
-        ? 'This exercise may require professional guidance based on your health profile. Consult a qualified professional before attempting.'
-        : (content?.safetyNotes || 'Focus on strict form and controlled contraction.');
+      const content = catalogById.get(source.id);
+      const sets = isBeginner || isLowEnergy
+        ? '2'
+        : (goalConfig.sets || String(source.sourceSets || 3));
+      const reps = isBeginner
+        ? '8-12'
+        : (goalConfig.reps || String(source.sourceReps || '10-12'));
+      const rest = goalConfig.rest || content?.defaultRest || '90s';
 
       return {
         name: source.name,
         exerciseId: source.id,
-        imageUrl: `api/workouts/exercise-images/${source.id}`,
-        sets: String(adjustedSets),
-        reps: String(source.sourceReps || '10-12'),
-        weight: loggedWeight,
-        rest: formatRest(adjustedRest),
-        notes: safetyNote,
-        targetMuscles: content?.targetMuscles || [],
+        imageUrl: content?.imageUrl || '',
+        sets,
+        reps,
+        weight: recentPerformanceByName.get(source.name.toLowerCase()) || '',
+        rest,
+        notes: content?.safetyNotes || 'Focus on strict form and controlled contraction.',
+        targetMuscles: content?.targetMuscles || [content?.targetMuscle || 'Full Body'],
         secondaryMuscles: content?.secondaryMuscles || [],
-        equipmentRequired: content?.equipmentRequired || [],
-        exerciseDifficulty: content?.difficulty || '',
-        movementPattern: content?.movementPattern || '',
-        startingPosition: content?.startingPosition || '',
+        equipmentRequired: content?.equipmentRequired || ['None'],
+        exerciseDifficulty: content?.difficulty || experience,
+        movementPattern: content?.movementPattern || 'Compound',
+        startingPosition: content?.startingPosition || 'Standard starting stance',
         executionSteps: content?.executionSteps || [],
         commonMistakes: content?.commonMistakes || [],
-        safetyNotes: content?.safetyNotes || '',
-        restInterval: content?.restInterval || '90s',
-        resistanceType: content?.resistanceType || '',
+        safetyNotes: content?.safetyNotes || 'Maintain proper form and core engagement.',
       };
     });
 
-    const durationMinutes = Math.max(20, exercises.length * (isBeginner ? 8 : 7));
-
     return {
-      name: `${sourceDay.day}: ${sourceDay.focus}`,
-      split: sourceDay.focus,
+      name: `${sourceDay.day}: ${sessionFocus}`,
+      split: sessionFocus,
       exercises,
-      duration: `${durationMinutes} min`,
-      calories: isBeginner ? 240 : 320,
+      duration: `${Math.max(20, exercises.length * 7)} min`,
+      calories: 0,
       difficulty: experience,
-      notes: `Day ${dayIndex + 1}: ${goalConfig.focusNote}`,
+      notes: `Day ${dayIndex + 1}: ${sessionFocus}`,
     };
   });
 

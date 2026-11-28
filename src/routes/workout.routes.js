@@ -239,7 +239,7 @@ function createWorkoutRoutes({
         sourceCount: 0,
         available: false,
         exercises: [],
-        message: 'No exercise library is available for the selected environment yet.',
+        message: 'Gym exercises are only available for the Gym environment.',
       });
       return;
     }
@@ -251,11 +251,10 @@ function createWorkoutRoutes({
       count: exercises.length,
       sourceCount: availability.sourceCount,
       available: exercises.length > 0,
+      imageFilesPresent: availability.imageFilesPresent,
       exercises,
       unavailableExercises: availability.unavailableExercises,
-      message: exercises.length > 0
-        ? null
-        : 'The 42-entry Gym program is recorded, but no exercise currently has both verified metadata and an approved instructional image.',
+      message: exercises.length > 0 ? null : 'Gym exercise information is incomplete.',
     });
   });
 

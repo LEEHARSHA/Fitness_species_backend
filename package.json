@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test",
+    "test": "node --test tests/*.test.js",
     "check": "node --check src/server.js && node --check src/app.js",
     "db:check": "node scripts/db-check.js",
     "db:persistence-check": "node scripts/persistence-check.js"

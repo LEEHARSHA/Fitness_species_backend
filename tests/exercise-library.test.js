@@ -13,70 +13,65 @@ const {
   getSourceInventory,
 } = require('../src/workouts/gym-workout-program.cjs');
 
-test('only the exact 42-entry six-day Gym source program is retained', () => {
+test('the exact 42-entry six-day Gym source program retains canonical exercise IDs', () => {
   const inventory = getSourceInventory();
   const schedule = getProgramSchedule();
   assert.equal(inventory.length, 42);
   assert.deepEqual(schedule.map((day) => day.exerciseCount), [7, 7, 7, 7, 7, 7, 0]);
   assert.deepEqual(schedule.map((day) => day.focus), [
-    'Chest + Triceps — Heavy Press Focus',
-    'Back + Biceps — Rowing and Width Focus',
-    'Legs + Shoulders — Quad and Deltoid Focus',
-    'Chest + Triceps — Isolation Focus',
-    'Back + Biceps — Cable and Stretch Focus',
-    'Legs + Shoulders — Posterior Chain and Rear Deltoid Focus',
+    'Chest + Triceps',
+    'Back + Biceps',
+    'Legs + Shoulders',
+    'Chest + Triceps — Different variations',
+    'Back + Biceps — Different variations',
+    'Legs + Shoulders — Different variations',
     'Rest or Active Recovery',
   ]);
   assert.equal(new Set(inventory.map((exercise) => exercise.id)).size, 42);
-  assert.equal(inventory.every((exercise) => exercise.imageStatus === 'unverified'), true);
-  assert.equal(inventory.every((exercise) => exercise.metadataStatus === 'unverified'), true);
+  assert.equal(inventory.every((exercise) => /^[a-z0-9-]+$/.test(exercise.id)), true);
 });
 
-test('unapproved exercise drafts remain unavailable for workout publication', () => {
-  assert.deepEqual(exerciseLibrary.getExerciseCatalog(), []);
+test('exercise availability is independent of optional image availability', () => {
+  const catalog = exerciseLibrary.getExerciseCatalog('Gym');
+  assert.equal(catalog.length, 42);
   assert.equal(exerciseLibrary.getExerciseAsset('bodyweight-squat'), null);
   const availability = exerciseLibrary.getExerciseAvailability();
   assert.equal(availability.sourceCount, 42);
-  assert.equal(availability.availableCount, 0);
-  assert.equal(availability.imageFilesPresent, 11);
-  assert.equal(availability.approvedImageCount, 0);
-  assert.equal(availability.approvedMetadataCount, 0);
-  assert.equal(availability.unavailableExercises.length, 42);
-  assert.equal(availability.unavailableExercises.every((exercise) => (
-    exercise.imageAssetPath === `drafts/${exercise.id}.svg`
-    && exercise.imageReviewStatus === 'pending_visual_review'
-    && exercise.metadataReviewStatus === 'pending_professional_review'
-    && exercise.missingRequirements.includes('image_license')
-    && exercise.missingRequirements.includes('visual_image_review')
-    && exercise.missingRequirements.includes('professional_metadata_review')
+  assert.equal(availability.availableCount, 42);
+  assert.ok(availability.imageFilesPresent > 0);
+  assert.ok(availability.imageFilesPresent < 42);
+  assert.equal(availability.unavailableExercises.length, 0);
+  assert.equal(exerciseLibrary.getExerciseCatalog('Home Workout').length, 0);
+});
+
+test('all 42 source entries have complete metadata and only available image URLs', () => {
+  const inventory = getSourceInventory();
+  const records = exerciseLibrary.getExerciseCatalog('Gym');
+  assert.equal(records.length, 42);
+  assert.deepEqual(records.map(({ id }) => id), inventory.map(({ id }) => id));
+  assert.equal(records.every((record, index) => (
+    record.name === inventory[index].name
+    && record.day === inventory[index].day
+    && record.dayIndex === inventory[index].dayIndex
+    && record.targetMuscles.length > 0
+    && Array.isArray(record.secondaryMuscles)
+    && record.equipmentRequired.length > 0
+    && record.executionSteps.length > 0
+    && record.breathing.length > 0
+    && record.imageAvailable === Boolean(record.imageUrl)
+    && !Object.hasOwn(record, 'imageLicense')
+    && !Object.hasOwn(record, 'imageSource')
   )), true);
 });
 
-test('beginner plans use low volume and never invent resistance', () => {
-  const catalog = getSourceInventory().map((source) => ({
-    id: source.id,
-    name: source.name,
-    imageStatus: 'verified',
-    metadataStatus: 'verified',
-    imageReviewStatus: 'approved',
-    metadataReviewStatus: 'approved',
-    imageUrl: `/api/workouts/exercise-images/${source.id}`,
-    imageLicense: 'Test fixture license',
-    imageSource: 'Test fixture source',
-    targetMuscles: ['Target muscle'],
-    equipmentRequired: ['Barbell'],
-    difficulty: 'beginner',
-    startingPosition: 'Stable starting position.',
-    executionSteps: ['Perform the controlled movement.'],
-    commonMistakes: ['Do not lose control of the movement.'],
-    safetyNotes: 'Stop if pain or form loss occurs.',
-    rest: '90 seconds',
-    gymProgramming: [{ rest: '90 seconds' }],
-  }));
+test('beginner programming is low-volume, full-body, and independent of image/licensing metadata', () => {
+  const catalog = exerciseLibrary.getExerciseCatalog('Gym').map(({ imageUrl, ...exercise }) => exercise);
   const profile = {
+    fitnessGoal: 'Recomposition',
     trainingExperience: 'Beginner',
     trainingDays: 3,
-    availableEquipment: ['Barbell'],
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Medium',
     healthConsent: true,
     healthConditions: ['None'],
     injuries: ['None'],
@@ -86,23 +81,21 @@ test('beginner plans use low volume and never invent resistance', () => {
   const monday = generated.plan.sessions[0];
   assert.equal(monday.exercises.length, 4);
   assert.equal(monday.exercises.every((exercise) => Number(exercise.sets) <= 2), true);
-  assert.equal(monday.exercises.every((exercise) => exercise.weight === 'Starting weight: Not set'), true);
+  assert.equal(monday.exercises.every((exercise) => exercise.weight === ''), true);
   assert.equal(monday.exercises.some((exercise) => /weighted triceps dips/i.test(exercise.name)), false);
   assert.equal(generated.plan.sessions[1].exercises.length, 0);
-
-  const pendingReviewCatalog = catalog.map((exercise) => ({
-    ...exercise,
-    imageReviewStatus: 'pending_visual_review',
-  }));
-  assert.equal(
-    generateGymWeeklyPlan(profile, [], pendingReviewCatalog).error.code,
-    'WORKOUT_CONTENT_UNVERIFIED',
+  assert.equal(generated.plan.sessions[2].exercises.length, 4);
+  assert.equal(generated.plan.sessions[4].exercises.length, 0);
+  assert.equal(generated.plan.sessions[5].exercises.length, 4);
+  assert.deepEqual(
+    generated.plan.sessions.filter((session) => session.exercises.length > 0).map((session) => session.split),
+    ['Full Body A', 'Full Body B', 'Full Body C'],
   );
-
+  assert.equal(generated.plan.sessions.flatMap((session) => session.exercises).length, 12);
   const historyBased = generateGymWeeklyPlan(profile, [{
-    exercises: [{ exerciseName: 'Flat Barbell Bench Press', weight: '60 kg' }],
+    exercises: [{ exerciseName: 'Barbell Bench Press', weight: '40 kg' }],
   }], catalog);
-  assert.equal(historyBased.plan.sessions[0].exercises[0].weight, '60 kg');
+  assert.equal(historyBased.plan.sessions[0].exercises[0].weight, '40 kg');
 });
 
 test('workout profile update has no MongoDB conflicting operator paths', () => {
@@ -130,34 +123,54 @@ test('workout profile update has no MongoDB conflicting operator paths', () => {
   assert.equal(update.$setOnInsert.firebaseProjectId, 'project-fitness-species');
 });
 
-test('Gym API exposes pending source inventory without publishing unverified exercises', async () => {
+test('Gym API returns eligible exercises with images optional and no fabricated licensing data', async () => {
   const gymProfile = {
     trainingEnvironment: 'Gym',
-    trainingExperience: 'Intermediate',
-    trainingDays: 6,
-    availableEquipment: ['Dumbbells', 'Barbell'],
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Beginner',
+    trainingDays: 3,
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Medium',
     healthConsent: true,
     healthConditions: ['None'],
     injuries: ['None'],
   };
+  const database = {
+    workoutProfiles: [{ ...gymProfile, userId: 'empty-workout-test-user' }],
+    workoutPlans: [],
+    workoutSessions: [],
+  };
+  const db = {
+    collection(name) {
+      const items = database[name] || (database[name] = []);
+      return {
+        async findOne(query) {
+          return items.find((item) => Object.entries(query).every(([key, value]) => item[key] === value)) || null;
+        },
+        find(query) {
+          let found = items.filter((item) => Object.entries(query).every(([key, value]) => item[key] === value));
+          const cursor = {
+            sort() { return cursor; },
+            limit(limit) { found = found.slice(0, limit); return cursor; },
+            async toArray() { return found; },
+          };
+          return cursor;
+        },
+        async insertOne(document) {
+          const insertedId = { toString: () => `test-plan-${items.length + 1}` };
+          items.push({ ...document, _id: insertedId });
+          return { insertedId };
+        },
+        async updateOne(query, update) {
+          const record = items.find((item) => Object.entries(query).every(([key, value]) => item[key] === value));
+          if (record) Object.assign(record, update.$set);
+          return { matchedCount: record ? 1 : 0 };
+        },
+      };
+    },
+  };
   const app = createApp({
-    getDb: () => ({
-      collection: (name) => {
-        const collection = {
-          async findOne() {
-            return name === 'workoutProfiles' ? gymProfile : null;
-          },
-          find() {
-            return {
-              sort() { return this; },
-              limit() { return this; },
-              async toArray() { return []; },
-            };
-          },
-        };
-        return collection;
-      },
-    }),
+    getDb: () => db,
     getDbStatus: () => 'connected',
     verifyIdToken: async () => ({
       uid: 'empty-workout-test-user',
@@ -171,17 +184,35 @@ test('Gym API exposes pending source inventory without publishing unverified exe
     .query({ environment: 'Gym' })
     .set('Authorization', 'Bearer valid');
   assert.equal(catalog.status, 200);
-  assert.equal(catalog.body.count, 0);
+  assert.equal(catalog.body.count, 42);
   assert.equal(catalog.body.sourceCount, 42);
-  assert.equal(catalog.body.available, false);
-  assert.equal(catalog.body.unavailableExercises.length, 42);
-  assert.deepEqual(catalog.body.exercises, []);
+  assert.equal(catalog.body.available, true);
+  assert.ok(catalog.body.imageFilesPresent > 0);
+  assert.equal(catalog.body.unavailableExercises.length, 0);
+  assert.ok(catalog.body.exercises.some((exercise) => !exercise.imageAvailable));
+  assert.ok(catalog.body.exercises.every((exercise) => !Object.hasOwn(exercise, 'imageLicense')));
 
-  const active = await request(app)
-    .get('/api/workouts/active')
+  const generated = await request(app)
+    .post('/api/workouts/generate')
     .set('Authorization', 'Bearer valid');
-  assert.equal(active.status, 200);
-  assert.equal(active.body.plan, null);
+  assert.equal(generated.status, 200);
+  assert.equal(generated.body.success, true);
+  assert.equal(generated.body.plan.environment, 'Gym');
+  const assigned = generated.body.plan.weeklyWorkout.sessions.flatMap((session) => session.exercises);
+  assert.equal(assigned.length, 12);
+  assert.deepEqual(
+    generated.body.plan.weeklyWorkout.sessions.map((session) => session.exercises.length),
+    [4, 0, 4, 0, 0, 4, 0],
+  );
+  assert.ok(assigned.every((exercise) => exercise.exerciseId && exercise.name));
+  assert.ok(assigned.every((exercise) => exercise.targetMuscles.length > 0));
+  assert.ok(assigned.every((exercise) => exercise.equipmentRequired.length > 0));
+  assert.ok(assigned.every((exercise) => exercise.executionSteps.length > 0));
+  assert.ok(assigned.every((exercise) => exercise.safetyNotes));
+  assert.ok(assigned.every((exercise) => exercise.sets === '2' && exercise.reps === '8-12'));
+  assert.ok(assigned.some((exercise) => !exercise.imageUrl));
+  assert.ok(database.workoutPlans[0]);
+  assert.equal(database.workoutPlans[0].weeklyWorkout.sessions.flatMap((session) => session.exercises).length, 12);
 
   const homeCatalog = await request(app)
     .get('/api/workouts/exercises')
@@ -190,50 +221,50 @@ test('Gym API exposes pending source inventory without publishing unverified exe
   assert.equal(homeCatalog.status, 200);
   assert.equal(homeCatalog.body.sourceCount, 0);
 
-  const generated = await request(app)
-    .post('/api/workouts/generate')
-    .set('Authorization', 'Bearer valid')
-    .send({ environment: 'Gym', exercises: [] });
-  assert.equal(generated.status, 503);
-  assert.equal(generated.body.code, 'WORKOUT_CONTENT_UNVERIFIED');
-  assert.equal(generated.body.sourceCount, 42);
-  assert.equal(generated.body.availableCount, 0);
 });
 
-test('active Gym plans are withheld when health screening or saved plan preferences are stale', async () => {
+test('opening Workouts creates and persists a plan when one does not exist', async () => {
   const profile = {
     trainingEnvironment: 'Gym',
-    fitnessGoal: 'Body Recomposition',
-    trainingExperience: 'Intermediate',
-    trainingDays: 6,
-    availableEquipment: ['Barbell', 'Dumbbells'],
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Beginner',
+    trainingDays: 3,
+    availableEquipment: ['Suitable gym equipment available'],
+    energyLevel: 'Medium',
     healthConsent: true,
     healthConditions: ['None'],
     injuries: ['None'],
   };
-  const activePlan = {
-    _id: { toString: () => 'plan-id' },
-    userId: 'stale-plan-user',
-    version: 1,
-    status: 'active',
-    environment: 'Gym',
-    goal: 'Bulking',
-    experience: 'Intermediate',
-    daysPerWeek: 6,
-    preferencesSnapshot: {
-      ...profile,
-      fitnessGoal: 'Bulking',
+  let savedPlan = null;
+  const db = {
+    collection(name) {
+      return {
+        async findOne(query) {
+          if (name === 'workoutProfiles') return profile;
+          return savedPlan && Object.entries(query).every(([key, value]) => savedPlan[key] === value)
+            ? savedPlan
+            : null;
+        },
+        find() {
+          return {
+            sort() { return this; },
+            limit() { return this; },
+            async toArray() { return []; },
+          };
+        },
+        async insertOne(document) {
+          savedPlan = { ...document, _id: { toString: () => 'assigned-plan-1' } };
+          return { insertedId: savedPlan._id };
+        },
+        async updateOne(query, update) {
+          if (savedPlan) Object.assign(savedPlan, update.$set);
+          return { matchedCount: savedPlan ? 1 : 0 };
+        },
+      };
     },
-    weeklyWorkout: { sessions: [{ exercises: [{ exerciseId: 'unverified' }] }] },
   };
   const app = createApp({
-    getDb: () => ({
-      collection: (name) => ({
-        async findOne() {
-          return name === 'workoutProfiles' ? profile : activePlan;
-        },
-      }),
-    }),
+    getDb: () => db,
     getDbStatus: () => 'connected',
     verifyIdToken: async () => ({
       uid: 'stale-plan-user',
@@ -246,15 +277,22 @@ test('active Gym plans are withheld when health screening or saved plan preferen
     .get('/api/workouts/active')
     .set('Authorization', 'Bearer valid');
   assert.equal(stalePlan.status, 200);
-  assert.equal(stalePlan.body.plan, null);
-  assert.equal(stalePlan.body.code, 'WORKOUT_PREFERENCES_CHANGED');
+  assert.equal(stalePlan.body.success, true);
+  assert.equal(stalePlan.body.plan.id, 'assigned-plan-1');
+  assert.ok(stalePlan.body.plan.weeklyWorkout.sessions.flatMap((session) => session.exercises).length > 0);
+  assert.ok(savedPlan);
+  const secondOpen = await request(app)
+    .get('/api/workouts/active')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(secondOpen.status, 200);
+  assert.equal(secondOpen.body.plan.version, 1);
 
-  profile.healthConditions = ['Heart Disease'];
+  profile.injuries = ['Shoulder injury'];
   const restrictedPlan = await request(app)
     .get('/api/workouts/active')
     .set('Authorization', 'Bearer valid');
-  assert.equal(restrictedPlan.status, 200);
-  assert.equal(restrictedPlan.body.plan, null);
+  assert.equal(restrictedPlan.status, 409);
+  assert.equal(restrictedPlan.body.success, false);
   assert.equal(restrictedPlan.body.code, 'PROFESSIONAL_GUIDANCE_REQUIRED');
 });
 
@@ -412,4 +450,24 @@ test('MongoDB profile write failures return categorized diagnostics', async () =
   assert.equal(response.status, 500);
   assert.equal(response.body.code, 'MONGODB_ERROR');
   assert.equal(response.headers['x-correlation-id'], 'workout-profile-test');
+});
+
+test('assigned exercises include optional media without manufacturing licensing fields', () => {
+  const catalog = exerciseLibrary.getExerciseCatalog('Gym');
+  const profile = {
+    trainingEnvironment: 'Gym',
+    fitnessGoal: 'Recomposition',
+    trainingExperience: 'Beginner',
+    trainingDays: 3,
+    healthConditions: ['None'],
+    injuries: ['None'],
+    energyLevel: 'Medium',
+    availableEquipment: ['Suitable gym equipment available'],
+  };
+  const result = generateGymWeeklyPlan(profile, [], catalog);
+  const assigned = result.plan.sessions.flatMap((session) => session.exercises);
+  assert.ok(assigned.length > 0);
+  assert.ok(assigned.every((exercise) => !Object.hasOwn(exercise, 'imageLicense')));
+  assert.ok(assigned.every((exercise) => !Object.hasOwn(exercise, 'assetLicense')));
+  assert.ok(assigned.some((exercise) => !exercise.imageUrl));
 });

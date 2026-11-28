@@ -6,7 +6,7 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
   function formatPlanResponse(doc) {
     if (!doc) return null;
     return {
-      id: doc._id.toString(),
+      id: doc._id?.toString?.() || '',
       userId: doc.userId,
       version: doc.version,
       status: doc.status,
@@ -22,6 +22,87 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
     };
   }
 
+  function requiresProfessionalGuidance(profile) {
+    const disclosed = (values) => (values || []).filter(
+      (value) => !/^(none|no|prefer not to disclose)$/i.test(String(value).trim()),
+    );
+    const conditions = disclosed(profile.healthConditions);
+    const injuries = disclosed(profile.injuries);
+    return conditions.some((value) => /heart|cardiac|surgery|recent|pregnan|stroke|uncontrolled/i.test(value))
+      || injuries.length > 0;
+  }
+
+  async function generateAndSavePlan(db, userId, firebaseProjectId, profile) {
+    const catalog = getExerciseCatalog('Gym');
+    if (catalog.length === 0) {
+      return {
+        error: {
+          code: 'WORKOUT_CONTENT_UNAVAILABLE',
+          message: 'Gym exercise information is incomplete; no workout plan was assigned.',
+        },
+      };
+    }
+
+    const history = await db.collection('workoutSessions')
+      .find({ userId })
+      .sort({ completedAt: -1 })
+      .limit(100)
+      .toArray();
+    const generated = generateGymWeeklyPlan(profile, history, catalog);
+    if (!generated.plan || !generated.plan.sessions.some((session) => session.exercises.length > 0)) {
+      return {
+        error: {
+          code: generated.error?.code || 'GENERATION_FAILED',
+          message: generated.error?.message || 'No suitable exercises matched the saved workout profile.',
+        },
+      };
+    }
+
+    const weeklyWorkout = generated.plan;
+    const todayIndex = (new Date().getUTCDay() + 6) % 7;
+    const now = new Date();
+    const current = await db.collection('workoutPlans').findOne({
+      userId,
+      environment: 'Gym',
+      status: 'active',
+    });
+    const planData = {
+      userId,
+      firebaseProjectId,
+      version: (current?.version || 0) + 1,
+      status: 'active',
+      environment: 'Gym',
+      goal: profile.fitnessGoal || '',
+      experience: profile.trainingExperience || profile.gymLiftingExperience || 'Beginner',
+      daysPerWeek: profile.trainingDays || 3,
+      preferencesSnapshot: profile,
+      workout: weeklyWorkout.sessions[todayIndex],
+      weeklyWorkout,
+      updatedAt: now,
+    };
+
+    if (current) {
+      await db.collection('workoutPlans').updateOne({ _id: current._id }, { $set: planData });
+    } else {
+      await db.collection('workoutPlans').insertOne({ ...planData, createdAt: now });
+    }
+
+    const saved = await db.collection('workoutPlans').findOne({
+      userId,
+      environment: 'Gym',
+      status: 'active',
+    });
+    if (!saved) {
+      return {
+        error: {
+          code: 'WORKOUT_PLAN_PERSISTENCE_FAILED',
+          message: 'The generated workout plan could not be confirmed as saved.',
+        },
+      };
+    }
+    return { plan: saved };
+  }
+
   const getActiveWorkout = async (req, res, next) => {
     try {
       const db = getDatabase();
@@ -29,24 +110,17 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
       const firebaseProjectId = req.user.firebaseProjectId;
       const profile = await db.collection('workoutProfiles').findOne({ userId });
 
-      if (!profile || profile.trainingEnvironment !== 'Gym') {
-        return res.status(200).json({
-          success: true,
-          plan: null,
+      if (!profile || String(profile.trainingEnvironment || '').toLowerCase() !== 'gym') {
+        return res.status(409).json({
+          success: false,
           code: 'ENVIRONMENT_WORKOUT_UNAVAILABLE',
-          message: 'No workout program is available for the selected environment.',
+          message: 'Select Gym in workout preferences to receive a Gym workout plan.',
         });
       }
 
-      const restricted = profile.healthConsent === true
-        && (
-          (profile.healthConditions || []).some((value) => /heart|surgery|recent|pregnan/i.test(value))
-          || (profile.injuries || []).some((value) => /rehabilitation|recent surgery|recover/i.test(value))
-        );
-      if (restricted) {
-        return res.status(200).json({
-          success: true,
-          plan: null,
+      if (requiresProfessionalGuidance(profile)) {
+        return res.status(409).json({
+          success: false,
           code: 'PROFESSIONAL_GUIDANCE_REQUIRED',
           message: 'Professional guidance is required before assigning a training plan.',
         });
@@ -60,87 +134,52 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
 
       if (activePlan) {
         const snapshot = activePlan.preferencesSnapshot;
-        const preferenceChanged = snapshot && (
-          snapshot.fitnessGoal !== profile.fitnessGoal
-          || snapshot.trainingEnvironment !== profile.trainingEnvironment
-          || snapshot.trainingExperience !== profile.trainingExperience
-          || snapshot.trainingDays !== profile.trainingDays
-          || snapshot.energyLevel !== profile.energyLevel
-          || JSON.stringify(snapshot.availableEquipment || []) !== JSON.stringify(profile.availableEquipment || [])
-          || JSON.stringify(snapshot.healthConditions || []) !== JSON.stringify(profile.healthConditions || [])
-          || JSON.stringify(snapshot.injuries || []) !== JSON.stringify(profile.injuries || [])
+        const preferenceFields = [
+          'fitnessGoal',
+          'trainingEnvironment',
+          'trainingExperience',
+          'gymLiftingExperience',
+          'trainingDays',
+          'energyLevel',
+          'availableEquipment',
+          'healthConditions',
+          'otherHealthCondition',
+          'injuries',
+          'otherInjury',
+          'healthConsent',
+          'injuryStatus',
+          'injuryRestrictions',
+          'injuryClearedToExercise',
+          'gymStrengthHistory',
+          'gymRecoveryStatus',
+        ];
+        const preferenceChanged = snapshot && preferenceFields.some(
+          (field) => JSON.stringify(snapshot[field] ?? null) !== JSON.stringify(profile[field] ?? null),
         );
-        if (preferenceChanged) {
-          activePlan = null;
-          return res.status(200).json({
-            success: true,
-            plan: null,
-            code: 'WORKOUT_PREFERENCES_CHANGED',
-            message: 'The active workout does not match the saved preferences. No stale plan was returned.',
-          });
-        }
+        if (preferenceChanged) activePlan = null;
 
-        const eligibleCatalog = getExerciseCatalog('Gym');
-        const eligibleIds = new Set(eligibleCatalog.map((exercise) => exercise.id));
-        const assignedExercises = (activePlan.weeklyWorkout?.sessions || [])
-          .flatMap((session) => session.exercises || []);
-        const hasUnverifiedAssignedExercise = assignedExercises.some((exercise) =>
-          !exercise.exerciseId || !eligibleIds.has(exercise.exerciseId));
-        if (eligibleCatalog.length === 0 || hasUnverifiedAssignedExercise) {
-          activePlan = null;
-          return res.status(200).json({
-            success: true,
-            plan: null,
-            code: 'WORKOUT_CONTENT_UNVERIFIED',
-            sourceCount: 42,
-            availableCount: eligibleCatalog.length,
-            message: 'The active plan cannot be published because its exercises no longer pass Gym content verification.',
-          });
+        if (activePlan) {
+          const eligibleIds = new Set(getExerciseCatalog('Gym').map((exercise) => exercise.id));
+          const assignedExercises = (activePlan.weeklyWorkout?.sessions || [])
+            .flatMap((session) => session.exercises || []);
+          const hasUnsupportedAssignedExercise = assignedExercises.some((exercise) =>
+            !exercise.exerciseId || !eligibleIds.has(exercise.exerciseId));
+          if (assignedExercises.length === 0 || hasUnsupportedAssignedExercise) {
+            activePlan = null;
+          }
         }
       }
 
       if (!activePlan) {
-        const catalog = getExerciseCatalog('Gym');
-        if (catalog.length === 0) {
-          return res.status(200).json({
-            success: true,
-            plan: null,
-            code: 'WORKOUT_CONTENT_UNVERIFIED',
-            sourceCount: 42,
-            availableCount: 0,
-            message: 'The 42-entry Gym program is recorded, but no exercise currently has both verified metadata and an approved instructional image.',
+        const generated = await generateAndSavePlan(db, userId, firebaseProjectId, profile);
+        if (generated.error) {
+          return res.status(503).json({
+            success: false,
+            code: generated.error.code,
+            message: generated.error.message,
           });
         }
-        const history = await db.collection('workoutSessions')
-          .find({ userId })
-          .sort({ completedAt: -1 })
-          .limit(100)
-          .toArray();
-        const generated = generateGymWeeklyPlan(profile, history, catalog);
-        if (generated.plan) {
-          const weeklyWorkout = generated.plan;
-          const todayIndex = (new Date().getUTCDay() + 6) % 7;
-          const todayWorkout = weeklyWorkout.sessions[todayIndex];
-          const now = new Date();
-          const newPlanDoc = {
-            userId,
-            firebaseProjectId,
-            version: 1,
-            status: 'active',
-            environment: 'Gym',
-            goal: profile.fitnessGoal || '',
-            experience: profile.trainingExperience || profile.gymLiftingExperience || '',
-            daysPerWeek: profile.trainingDays || 6,
-            preferencesSnapshot: profile,
-            workout: todayWorkout,
-            weeklyWorkout,
-            createdAt: now,
-            updatedAt: now,
-          };
-          const insertResult = await db.collection('workoutPlans').insertOne(newPlanDoc);
-          newPlanDoc._id = insertResult.insertedId;
-          activePlan = newPlanDoc;
-        }
+        activePlan = generated.plan;
       }
 
       return res.status(200).json({
@@ -159,74 +198,32 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
       const firebaseProjectId = req.user.firebaseProjectId;
       const profile = await db.collection('workoutProfiles').findOne({ userId });
 
-      if (!profile || profile.trainingEnvironment !== 'Gym') {
+      if (!profile || String(profile.trainingEnvironment || '').toLowerCase() !== 'gym') {
         return res.status(409).json({
           success: false,
           code: 'ENVIRONMENT_WORKOUT_UNAVAILABLE',
           message: 'The Gym workout program is only available to users who selected Gym.',
         });
       }
-
-      const catalog = getExerciseCatalog('Gym');
-      const history = await db.collection('workoutSessions')
-        .find({ userId })
-        .sort({ completedAt: -1 })
-        .limit(100)
-        .toArray();
-      const generated = generateGymWeeklyPlan(profile, history, catalog);
-
-      if (generated.error || !generated.plan) {
-        return res.status(503).json({
+      if (requiresProfessionalGuidance(profile)) {
+        return res.status(409).json({
           success: false,
-          code: generated.error?.code || 'GENERATION_FAILED',
-          sourceCount: 42,
-          availableCount: catalog.length,
-          message: generated.error?.message || 'Could not generate plan.',
+          code: 'PROFESSIONAL_GUIDANCE_REQUIRED',
+          message: 'Professional guidance is required before assigning a training plan.',
         });
       }
 
-      const weeklyWorkout = generated.plan;
-      const todayIndex = (new Date().getUTCDay() + 6) % 7;
-      const todayWorkout = weeklyWorkout.sessions[todayIndex];
-      const now = new Date();
-
-      const current = await db.collection('workoutPlans').findOne({
-        userId,
-        environment: 'Gym',
-        status: 'active',
-      });
-
-      const planData = {
-        userId,
-        firebaseProjectId,
-        version: (current?.version || 0) + 1,
-        status: 'active',
-        environment: 'Gym',
-        goal: profile.fitnessGoal || '',
-        experience: profile.trainingExperience || profile.gymLiftingExperience || '',
-        daysPerWeek: profile.trainingDays || 6,
-        preferencesSnapshot: profile,
-        workout: todayWorkout,
-        weeklyWorkout,
-        updatedAt: now,
-      };
-
-      if (current) {
-        await db.collection('workoutPlans').updateOne(
-          { _id: current._id },
-          { $set: planData }
-        );
-      } else {
-        await db.collection('workoutPlans').insertOne({ ...planData, createdAt: now });
+      const generated = await generateAndSavePlan(db, userId, firebaseProjectId, profile);
+      if (generated.error) {
+        return res.status(503).json({
+          success: false,
+          code: generated.error.code,
+          sourceCount: 42,
+          availableCount: getExerciseCatalog('Gym').length,
+          message: generated.error.message,
+        });
       }
-
-      const saved = await db.collection('workoutPlans').findOne({
-        userId,
-        environment: 'Gym',
-        status: 'active',
-      });
-
-      return res.status(200).json({ success: true, plan: formatPlanResponse(saved || planData) });
+      return res.status(200).json({ success: true, plan: formatPlanResponse(generated.plan) });
     } catch (error) {
       next(error);
     }
