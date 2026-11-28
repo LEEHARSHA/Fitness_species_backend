@@ -24,7 +24,7 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
 
   function requiresProfessionalGuidance(profile) {
     const disclosed = (values) => (values || []).filter(
-      (value) => !/^(none|no|prefer not to disclose)$/i.test(String(value).trim()),
+      (value) => !/^(none|no|no injuries?|no medical conditions?|prefer not to disclose|not applicable|n\/a)$/i.test(String(value).trim()),
     );
     const conditions = disclosed(profile.healthConditions);
     const injuries = disclosed(profile.injuries);
@@ -34,20 +34,12 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
 
   async function generateAndSavePlan(db, userId, firebaseProjectId, profile) {
     const catalog = getExerciseCatalog('Gym');
-    if (catalog.length === 0) {
-      return {
-        error: {
-          code: 'WORKOUT_CONTENT_UNAVAILABLE',
-          message: 'Gym exercise information is incomplete; no workout plan was assigned.',
-        },
-      };
-    }
-
     const history = await db.collection('workoutSessions')
       .find({ userId })
       .sort({ completedAt: -1 })
       .limit(100)
       .toArray();
+
     const generated = generateGymWeeklyPlan(profile, history, catalog);
     if (!generated.plan || !generated.plan.sessions.some((session) => session.exercises.length > 0)) {
       return {
@@ -111,9 +103,9 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
       const profile = await db.collection('workoutProfiles').findOne({ userId });
 
       if (!profile || String(profile.trainingEnvironment || '').toLowerCase() !== 'gym') {
-        return res.status(409).json({
-          success: false,
-          code: 'ENVIRONMENT_WORKOUT_UNAVAILABLE',
+        return res.status(200).json({
+          success: true,
+          plan: null,
           message: 'Select Gym in workout preferences to receive a Gym workout plan.',
         });
       }
@@ -132,54 +124,11 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
         status: 'active',
       });
 
-      if (activePlan) {
-        const snapshot = activePlan.preferencesSnapshot;
-        const preferenceFields = [
-          'fitnessGoal',
-          'trainingEnvironment',
-          'trainingExperience',
-          'gymLiftingExperience',
-          'trainingDays',
-          'energyLevel',
-          'availableEquipment',
-          'healthConditions',
-          'otherHealthCondition',
-          'injuries',
-          'otherInjury',
-          'healthConsent',
-          'injuryStatus',
-          'injuryRestrictions',
-          'injuryClearedToExercise',
-          'gymStrengthHistory',
-          'gymRecoveryStatus',
-        ];
-        const preferenceChanged = snapshot && preferenceFields.some(
-          (field) => JSON.stringify(snapshot[field] ?? null) !== JSON.stringify(profile[field] ?? null),
-        );
-        if (preferenceChanged) activePlan = null;
-
-        if (activePlan) {
-          const eligibleIds = new Set(getExerciseCatalog('Gym').map((exercise) => exercise.id));
-          const assignedExercises = (activePlan.weeklyWorkout?.sessions || [])
-            .flatMap((session) => session.exercises || []);
-          const hasUnsupportedAssignedExercise = assignedExercises.some((exercise) =>
-            !exercise.exerciseId || !eligibleIds.has(exercise.exerciseId));
-          if (assignedExercises.length === 0 || hasUnsupportedAssignedExercise) {
-            activePlan = null;
-          }
-        }
-      }
-
-      if (!activePlan) {
+      if (!activePlan || !activePlan.weeklyWorkout || !activePlan.weeklyWorkout.sessions?.some(s => s.exercises?.length > 0)) {
         const generated = await generateAndSavePlan(db, userId, firebaseProjectId, profile);
-        if (generated.error) {
-          return res.status(503).json({
-            success: false,
-            code: generated.error.code,
-            message: generated.error.message,
-          });
+        if (generated.plan) {
+          activePlan = generated.plan;
         }
-        activePlan = generated.plan;
       }
 
       return res.status(200).json({
@@ -205,6 +154,7 @@ function createWorkoutControllers({ getDb: getDatabase = getDb } = {}) {
           message: 'The Gym workout program is only available to users who selected Gym.',
         });
       }
+
       if (requiresProfessionalGuidance(profile)) {
         return res.status(409).json({
           success: false,

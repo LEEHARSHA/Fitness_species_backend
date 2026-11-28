@@ -287,6 +287,12 @@ test('opening Workouts creates and persists a plan when one does not exist', asy
   assert.equal(secondOpen.status, 200);
   assert.equal(secondOpen.body.plan.version, 1);
 
+  profile.injuries = ['No injuries'];
+  const noInjurySelected = await request(app)
+    .get('/api/workouts/active')
+    .set('Authorization', 'Bearer valid');
+  assert.equal(noInjurySelected.status, 200);
+
   profile.injuries = ['Shoulder injury'];
   const restrictedPlan = await request(app)
     .get('/api/workouts/active')
